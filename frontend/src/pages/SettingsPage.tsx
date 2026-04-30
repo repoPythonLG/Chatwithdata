@@ -6,9 +6,12 @@ import { DataSourceManager } from "../components/DataSourceManager";
 import { SchemaBrowser } from "../components/SchemaBrowser";
 import { SystemStatusPanel } from "../components/SystemStatusPanel";
 import { Button, Card, Input } from "../components/ui";
+import { useAppStore } from "../store/appStore";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const responseMode = useAppStore((state) => state.responseMode);
+  const setResponseMode = useAppStore((state) => state.setResponseMode);
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [modelName, setModelName] = useState("qwen3-coder-next");
@@ -97,6 +100,62 @@ export function SettingsPage() {
             </div>
           </form>
           {update.error ? <p className="mt-3 text-sm text-red-600">{update.error.message}</p> : null}
+        </Card>
+
+        <Card>
+          <div className="mb-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-ink-500 dark:text-ink-100">
+              Response mode
+            </p>
+            <h2 className="font-display text-2xl font-bold">Answer detail level</h2>
+            <p className="mt-2 text-sm text-ink-500 dark:text-ink-100">
+              Choose how much audit detail the chat response shows to business users.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <button
+              className={`rounded-3xl border p-4 text-left transition ${
+                responseMode === "simple"
+                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
+                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+              }`}
+              onClick={() => setResponseMode("simple")}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Simple</span>
+                {responseMode === "simple" ? (
+                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
+                    Active
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
+                Shows the final answer, summary, tables and charts while hiding SQL, Python, sources and caveats.
+              </p>
+            </button>
+            <button
+              className={`rounded-3xl border p-4 text-left transition ${
+                responseMode === "advanced"
+                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
+                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+              }`}
+              onClick={() => setResponseMode("advanced")}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Advanced</span>
+                {responseMode === "advanced" ? (
+                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
+                    Active
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
+                Shows the full audit trail, including generated SQL or Python, source references and caveats.
+              </p>
+            </button>
+          </div>
         </Card>
 
         <DataSourceManager />

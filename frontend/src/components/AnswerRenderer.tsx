@@ -1,10 +1,13 @@
 import { Code2, Database, MessageSquareText, ShieldAlert } from "lucide-react";
 
+import { useAppStore } from "../store/appStore";
 import type { ChatResponse } from "../types/api";
 import { ResultViewer } from "./ResultViewer";
 import { Badge, Card } from "./ui";
 
 export function AnswerRenderer({ response }: { response: ChatResponse }) {
+  const showAdvancedDetails = useAppStore((state) => state.responseMode === "advanced");
+
   return (
     <div className="space-y-4">
       <Card className="space-y-3">
@@ -25,7 +28,7 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
 
       <ResultViewer artifacts={response.artifacts} />
 
-      {(response.sql_query || response.python_code) && (
+      {showAdvancedDetails && (response.sql_query || response.python_code) && (
         <Card className="space-y-4">
           <div className="flex items-center gap-2">
             <Code2 className="h-4 w-4 text-harbor-500" />
@@ -36,7 +39,7 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
         </Card>
       )}
 
-      {response.sources.length ? (
+      {showAdvancedDetails && response.sources.length ? (
         <Card>
           <div className="mb-3 flex items-center gap-2">
             <Database className="h-4 w-4 text-harbor-500" />
@@ -53,7 +56,7 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
         </Card>
       ) : null}
 
-      {response.caveats.length ? (
+      {showAdvancedDetails && response.caveats.length ? (
         <Card className="border-amber-200 bg-amber-50/80 dark:border-amber-500/20 dark:bg-amber-500/10">
           <div className="mb-2 flex items-center gap-2 font-semibold text-amber-900 dark:text-amber-100">
             <ShieldAlert className="h-4 w-4" />
