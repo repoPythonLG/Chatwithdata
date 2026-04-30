@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Database, Loader2 } from "lucide-react";
+import { ArrowUp, Database, Eye, Loader2 } from "lucide-react";
 
 import { api, streamChat } from "../api/client";
 import { AnswerRenderer } from "../components/AnswerRenderer";
@@ -9,10 +9,11 @@ import {
   type UiMessage
 } from "../components/ConversationHistoryPanel";
 import { StatusTimeline } from "../components/StatusTimeline";
+import { SourcePreviewModal } from "../components/SourcePreviewModal";
 import { SystemStatusPanel } from "../components/SystemStatusPanel";
 import { Badge, Button, Card, Textarea } from "../components/ui";
 import { useAppStore } from "../store/appStore";
-import type { ChatResponse, Conversation, StatusEvent } from "../types/api";
+import type { ChatResponse, Conversation, DataSource, StatusEvent } from "../types/api";
 
 export function ChatPage() {
   const queryClient = useQueryClient();
@@ -28,6 +29,7 @@ export function ChatPage() {
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [events, setEvents] = useState<StatusEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [previewSource, setPreviewSource] = useState<DataSource | null>(null);
   const activeSources = useMemo(
     () => datasources.data?.filter((source) => source.status === "active") ?? [],
     [datasources.data]
@@ -165,21 +167,34 @@ export function ChatPage() {
                 effectiveSelectedDataSources.length === 0 ||
                 effectiveSelectedDataSources.includes(source.id);
               return (
-                <button
+                <div
                   className={[
-                    "w-full rounded-2xl border p-3 text-left text-sm transition",
+                    "flex w-full items-center gap-2 rounded-2xl border p-2 text-sm transition",
                     selected
                       ? "border-harbor-400 bg-harbor-400/10"
                       : "border-ink-100 bg-white/40 opacity-70 dark:border-white/10 dark:bg-white/5"
                   ].join(" ")}
                   key={source.id}
-                  onClick={() => toggleDataSource(source.id)}
                 >
-                  <span className="font-semibold">{source.name}</span>
-                  <span className="ml-2 text-xs text-ink-500 dark:text-ink-100">
-                    {source.source_type}
-                  </span>
-                </button>
+                  <button
+                    className="min-w-0 flex-1 p-1 text-left"
+                    onClick={() => toggleDataSource(source.id)}
+                    type="button"
+                  >
+                    <span className="block truncate font-semibold">{source.name}</span>
+                    <span className="text-xs text-ink-500 dark:text-ink-100">
+                      {source.source_type}
+                    </span>
+                  </button>
+                  <button
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-ink-100 bg-white/70 text-harbor-700 transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-harbor-300 dark:hover:bg-white/10"
+                    onClick={() => setPreviewSource(source)}
+                    title={`Preview ${source.name}`}
+                    type="button"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </button>
+                </div>
               );
             })}
           </div>
@@ -267,6 +282,7 @@ export function ChatPage() {
           </div>
         </form>
       </main>
+      <SourcePreviewModal source={previewSource} onClose={() => setPreviewSource(null)} />
     </div>
   );
 }

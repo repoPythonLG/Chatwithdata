@@ -70,6 +70,24 @@ export interface SchemaOut {
   relationships: RelationshipMetadata[];
 }
 
+export interface PreviewTableOption {
+  canonical_name: string;
+  original_name: string;
+  row_count: number | null;
+}
+
+export interface TablePreview {
+  data_source_id: string;
+  table: string;
+  original_name: string;
+  page: number;
+  page_size: number;
+  total_rows: number | null;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  tables: PreviewTableOption[];
+}
+
 export interface TableArtifact {
   type: "table";
   title: string;

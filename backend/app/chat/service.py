@@ -6,7 +6,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -40,6 +40,18 @@ class ChatService:
     async def get_conversation(self, conversation_id: str) -> ConversationOut:
         conversation = await self._get_conversation(conversation_id)
         return ConversationOut.model_validate(conversation)
+
+    async def delete_conversation(self, conversation_id: str) -> None:
+        conversation = await self.session.get(Conversation, conversation_id)
+        if conversation is None:
+            return
+        await self.session.delete(conversation)
+        await self.session.commit()
+
+    async def clear_conversations(self) -> None:
+        await self.session.execute(delete(ChatMessage))
+        await self.session.execute(delete(Conversation))
+        await self.session.commit()
 
     async def run_chat(self, payload: ChatRequest) -> ChatResponse:
         conversation = await self._ensure_conversation(payload)

@@ -69,3 +69,21 @@ class SchemaOut(BaseModel):
     data_sources: list[DataSourceOut]
     tables: list[TableOut]
     relationships: list[RelationshipOut]
+
+
+class PreviewTableOption(BaseModel):
+    canonical_name: str
+    original_name: str
+    row_count: int | None = None
+
+
+class TablePreviewOut(BaseModel):
+    data_source_id: str
+    table: str
+    original_name: str
+    page: int
+    page_size: int
+    total_rows: int | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    tables: list[PreviewTableOption] = Field(default_factory=list)

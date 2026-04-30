@@ -35,6 +35,19 @@ class QueryResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class TablePreview:
+    data_source_id: str
+    table: str
+    original_name: str
+    page: int
+    page_size: int
+    total_rows: int | None
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    tables: list[dict[str, Any]]
+
+
 class QueryEngine:
     """Unified read-only analytical query engine over configured local sources."""
 
@@ -56,6 +69,24 @@ class QueryEngine:
         return await asyncio.wait_for(
             asyncio.to_thread(self._materialize_for_python_sync, work_dir, selected_source_ids),
             timeout=self.settings.sql_timeout_seconds + 10,
+        )
+
+    async def preview_table(
+        self,
+        source_id: str,
+        table_name: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> TablePreview:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                self._preview_table_sync,
+                source_id,
+                table_name,
+                page,
+                page_size,
+            ),
+            timeout=self.settings.sql_timeout_seconds + 5,
         )
 
     def _execute_sql_sync(
@@ -112,6 +143,61 @@ class QueryEngine:
                     }
                 )
             return exported
+        finally:
+            conn.close()
+
+    def _preview_table_sync(
+        self,
+        source_id: str,
+        table_name: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> TablePreview:
+        page = max(1, page)
+        page_size = min(max(1, page_size), 100)
+        offset = (page - 1) * page_size
+        conn = duckdb.connect(database=":memory:", read_only=False)
+        try:
+            tables = self._load_tables_sync([source_id])
+            if not tables:
+                raise ValueError("No active tables found for this data source.")
+
+            selected_table = tables[0][0]
+            if table_name:
+                selected_table = next(
+                    (
+                        table
+                        for table, _source in tables
+                        if table.canonical_name == table_name or table.original_name == table_name
+                    ),
+                    None,
+                )
+                if selected_table is None:
+                    raise ValueError(f"Unknown table for this source: {table_name}")
+
+            self._register_tables(conn, tables)
+            frame = conn.execute(
+                f'SELECT * FROM "{selected_table.canonical_name}" LIMIT ? OFFSET ?',
+                [page_size, offset],
+            ).df()
+            return TablePreview(
+                data_source_id=source_id,
+                table=selected_table.canonical_name,
+                original_name=selected_table.original_name,
+                page=page,
+                page_size=page_size,
+                total_rows=selected_table.row_count,
+                columns=[str(column) for column in frame.columns],
+                rows=json_safe(frame.to_dict(orient="records")),
+                tables=[
+                    {
+                        "canonical_name": table.canonical_name,
+                        "original_name": table.original_name,
+                        "row_count": table.row_count,
+                    }
+                    for table, _source in tables
+                ],
+            )
         finally:
             conn.close()
 

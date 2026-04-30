@@ -16,6 +16,11 @@ async def list_conversations(session: AsyncSession = Depends(get_session)):
     return await ChatService(session).list_conversations()
 
 
+@router.delete("", status_code=204)
+async def clear_conversations(session: AsyncSession = Depends(get_session)):
+    await ChatService(session).clear_conversations()
+
+
 @router.post("", response_model=ChatResponse)
 async def create_chat(payload: ChatRequest, session: AsyncSession = Depends(get_session)):
     return await ChatService(session).run_chat(payload)
@@ -40,6 +45,11 @@ async def get_conversation(conversation_id: str, session: AsyncSession = Depends
         return await ChatService(session).get_conversation(conversation_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: str, session: AsyncSession = Depends(get_session)):
+    await ChatService(session).delete_conversation(conversation_id)
 
 
 @router.post("/{conversation_id}/messages", response_model=ChatResponse)

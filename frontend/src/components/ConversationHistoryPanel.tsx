@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { MessageSquare, Plus } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MessageSquare, Plus, Trash2 } from "lucide-react";
 
 import { api } from "../api/client";
 import type { ChatResponse, Conversation } from "../types/api";
@@ -21,7 +21,22 @@ export function ConversationHistoryPanel({
   onNew: () => void;
   onLoad: (conversation: Conversation, messages: UiMessage[]) => void;
 }) {
+  const queryClient = useQueryClient();
   const conversations = useQuery({ queryKey: ["conversations"], queryFn: api.conversations });
+  const removeConversation = useMutation({
+    mutationFn: api.deleteConversation,
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      if (id === activeConversationId) onNew();
+    }
+  });
+  const clearConversations = useMutation({
+    mutationFn: api.clearConversations,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      onNew();
+    }
+  });
 
   async function loadConversation(id: string) {
     const conversation = await api.conversation(id);
@@ -38,26 +53,58 @@ export function ConversationHistoryPanel({
     <Card className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h2 className="font-semibold">Conversations</h2>
-        <Button variant="ghost" onClick={onNew}>
-          <Plus className="mr-2 h-4 w-4" />
-          New
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (window.confirm("Clear all conversation history?")) {
+                clearConversations.mutate();
+              }
+            }}
+            disabled={!conversations.data?.length || clearConversations.isPending}
+          >
+            Clear all
+          </Button>
+          <Button variant="ghost" onClick={onNew}>
+            <Plus className="mr-2 h-4 w-4" />
+            New
+          </Button>
+        </div>
       </div>
       <div className="max-h-80 space-y-2 overflow-auto pr-1">
         {conversations.data?.map((conversation) => (
-          <button
+          <div
             className={[
-              "flex w-full items-start gap-3 rounded-2xl p-3 text-left text-sm transition",
+              "flex w-full items-start gap-2 rounded-2xl p-2 text-left text-sm transition",
               conversation.id === activeConversationId
                 ? "bg-harbor-500 text-white"
                 : "bg-white/55 text-ink-700 hover:bg-white dark:bg-white/5 dark:text-ink-50 dark:hover:bg-white/10"
             ].join(" ")}
             key={conversation.id}
-            onClick={() => loadConversation(conversation.id)}
           >
-            <MessageSquare className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="line-clamp-2">{conversation.title}</span>
-          </button>
+            <button
+              className="flex min-w-0 flex-1 items-start gap-3 p-1 text-left"
+              onClick={() => loadConversation(conversation.id)}
+              type="button"
+            >
+              <MessageSquare className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="line-clamp-2">{conversation.title}</span>
+            </button>
+            <button
+              className={[
+                "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition",
+                conversation.id === activeConversationId
+                  ? "bg-white/15 text-white hover:bg-white/25"
+                  : "text-ink-500 hover:bg-red-50 hover:text-red-600 dark:text-ink-100 dark:hover:bg-red-500/10 dark:hover:text-red-200"
+              ].join(" ")}
+              disabled={removeConversation.isPending}
+              onClick={() => removeConversation.mutate(conversation.id)}
+              title={`Remove ${conversation.title}`}
+              type="button"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
         ))}
       </div>
     </Card>

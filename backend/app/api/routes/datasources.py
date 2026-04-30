@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.security import safe_filename
 from app.datasources.catalog import DataSourceCatalog
+from app.datasources.query_engine import QueryEngine
 from app.db.session import get_session
-from app.schemas.datasource import DataSourceCreate, DataSourceOut
+from app.schemas.datasource import DataSourceCreate, DataSourceOut, TablePreviewOut
 
 router = APIRouter(prefix="/datasources", tags=["datasources"])
 
@@ -115,5 +116,25 @@ async def rescan_datasources(
     try:
         payload = payload or RescanRequest()
         return await DataSourceCatalog(session).rescan(payload.source_ids, force=payload.force)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{source_id}/preview", response_model=TablePreviewOut)
+async def preview_datasource_table(
+    source_id: str,
+    table: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    session: AsyncSession = Depends(get_session),
+):
+    try:
+        preview = await QueryEngine(session).preview_table(
+            source_id=source_id,
+            table_name=table,
+            page=page,
+            page_size=page_size,
+        )
+        return TablePreviewOut(**preview.__dict__)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

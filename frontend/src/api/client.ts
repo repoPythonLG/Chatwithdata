@@ -5,7 +5,8 @@ import type {
   DataSourceType,
   SchemaOut,
   SettingsOut,
-  StatusEvent
+  StatusEvent,
+  TablePreview
 } from "../types/api";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -51,11 +52,32 @@ export const api = {
     const response = await fetch(`${API_BASE}/datasources/${id}`, { method: "DELETE" });
     if (!response.ok) throw new Error(response.statusText);
   },
+  datasourcePreview: (payload: {
+    id: string;
+    table?: string | null;
+    page?: number;
+    page_size?: number;
+  }) => {
+    const params = new URLSearchParams();
+    if (payload.table) params.set("table", payload.table);
+    if (payload.page) params.set("page", String(payload.page));
+    if (payload.page_size) params.set("page_size", String(payload.page_size));
+    const query = params.toString();
+    return request<TablePreview>(`/datasources/${payload.id}/preview${query ? `?${query}` : ""}`);
+  },
   rescanDatasources: () =>
     request<DataSource[]>("/datasources/rescan", { method: "POST", body: JSON.stringify({}) }),
   schema: () => request<SchemaOut>("/schema"),
   conversations: () => request<Conversation[]>("/chat"),
   conversation: (id: string) => request<Conversation>(`/chat/${id}`),
+  deleteConversation: async (id: string) => {
+    const response = await fetch(`${API_BASE}/chat/${id}`, { method: "DELETE" });
+    if (!response.ok) throw new Error(response.statusText);
+  },
+  clearConversations: async () => {
+    const response = await fetch(`${API_BASE}/chat`, { method: "DELETE" });
+    if (!response.ok) throw new Error(response.statusText);
+  },
   chat: (payload: { message: string; conversation_id?: string | null; selected_data_sources?: string[] }) =>
     request<ChatResponse>("/chat", { method: "POST", body: JSON.stringify(payload) })
 };
