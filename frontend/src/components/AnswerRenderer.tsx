@@ -32,10 +32,10 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
         <Card className="space-y-4">
           <div className="flex items-center gap-2">
             <Code2 className="h-4 w-4 text-harbor-500" />
-            <h3 className="font-semibold">Executed logic</h3>
+            <h3 className="font-semibold">Generated logic</h3>
           </div>
-          {response.sql_query ? <CodeBlock title="SQL" code={response.sql_query} /> : null}
-          {response.python_code ? <CodeBlock title="Python" code={response.python_code} /> : null}
+          {response.sql_query ? <CodeBlock title="SQL query" code={response.sql_query} /> : null}
+          {response.python_code ? <CodeBlock title="Python code" code={response.python_code} /> : null}
         </Card>
       )}
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
@@ -10,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.prompts import (
+    AMBIGUITY_RESOLVER_SYSTEM,
     CLASSIFIER_SYSTEM,
     CRITIC_SYSTEM,
     FINAL_SYSTEM,
@@ -159,32 +159,6 @@ class DataChatAgent:
 
     async def classify_question(self, state: AgentState) -> AgentState:
         add_event(state, "Planning", "running", "Classifying the analysis request.")
-        if self._is_question_suggestion_request(state):
-            classification = {
-                "question_type": "question_suggestions",
-                "requires_chart": False,
-                "reasoning_summary": (
-                    "Detected a request for suggested questions grounded in the schema."
-                ),
-            }
-            state["classification"] = classification
-            state["question_type"] = "question_suggestions"
-            add_event(state, "Planning", "completed", "Classified as question_suggestions.")
-            return state
-
-        if self._is_metadata_request(state):
-            classification = {
-                "question_type": "metadata_lookup",
-                "requires_chart": False,
-                "reasoning_summary": (
-                    "Detected a broad data-catalog request from the question and recent context."
-                ),
-            }
-            state["classification"] = classification
-            state["question_type"] = "metadata_lookup"
-            add_event(state, "Planning", "completed", "Classified as metadata_lookup.")
-            return state
-
         prompt = [
             {"role": "system", "content": CLASSIFIER_SYSTEM},
             {
@@ -235,15 +209,15 @@ class DataChatAgent:
             add_event(state, "Planning", "warning", "No usable data sources are configured.")
             return state
 
-        if (
-            state.get("question_type") == "question_suggestions"
-            or self._is_question_suggestion_request(state)
-        ):
+        if state.get("question_type") == "ambiguous":
+            await self.resolve_ambiguity_with_schema(state)
+
+        if state.get("question_type") == "question_suggestions":
             state["execution_plan"] = self._question_suggestions_plan()
             add_event(state, "Planning", "completed", "Plan selected LLM question suggestions.")
             return state
 
-        if state.get("question_type") == "metadata_lookup" or self._is_metadata_request(state):
+        if state.get("question_type") == "metadata_lookup":
             state["execution_plan"] = self._metadata_plan()
             add_event(state, "Planning", "completed", "Plan selected metadata catalog summary.")
             return state
@@ -264,6 +238,7 @@ class DataChatAgent:
                         "question": state["user_question"],
                         "classification": state.get("classification", {}),
                         "schema": state.get("schema_context", ""),
+                        "schema_interpretation": state.get("schema_interpretation", {}),
                         "recent_messages": state.get("messages", [])[-6:],
                     }
                 ),
@@ -274,12 +249,6 @@ class DataChatAgent:
         except Exception as exc:
             plan = self._fallback_plan(state["user_question"], state.get("question_type", ""))
             plan["llm_warning"] = str(exc)
-        if plan.get("tool") == "python" and self._should_prioritize_sql(state):
-            plan["tool"] = "sql"
-            plan["sql_first_override"] = (
-                "The request looks like standard tabular analysis, so SQL will be "
-                "attempted before Python."
-            )
         state["execution_plan"] = plan
         add_event(
             state, "Planning", "completed", f"Plan selected {plan.get('tool', 'sql')} execution."
@@ -305,6 +274,7 @@ class DataChatAgent:
                     {
                         "question": state["user_question"],
                         "schema": state.get("schema_context", ""),
+                        "schema_interpretation": state.get("schema_interpretation", {}),
                         "plan": state.get("execution_plan", {}),
                         "recent_messages": state.get("messages", [])[-8:],
                         "attempt": state["sql_attempts"],
@@ -408,6 +378,7 @@ class DataChatAgent:
                     {
                         "question": state["user_question"],
                         "schema": state.get("schema_context", ""),
+                        "schema_interpretation": state.get("schema_interpretation", {}),
                         "plan": state.get("execution_plan", {}),
                         "recent_messages": state.get("messages", [])[-8:],
                         "sql_attempts": state.get("sql_attempts", 0),
@@ -578,10 +549,11 @@ class DataChatAgent:
             or state.get("question_type") in {"ambiguous", "impossible"}
         ):
             return "final"
-        if self._should_prioritize_sql(state):
-            state.setdefault("execution_plan", {})["tool"] = "sql"
+        if tool == "python":
+            return "python"
+        if tool == "sql":
             return "sql"
-        if tool == "python" or state.get("question_type") in {"requires_python", "requires_chart"}:
+        if state.get("question_type") in {"requires_python", "requires_chart"}:
             return "python"
         return "sql"
 
@@ -650,6 +622,7 @@ class DataChatAgent:
                         "question": state["user_question"],
                         "recent_messages": state.get("messages", [])[-8:],
                         "schema": state.get("schema_context", ""),
+                        "schema_interpretation": state.get("schema_interpretation", {}),
                         "plan": state.get("execution_plan", {}),
                         "sql": state.get("sql_query", ""),
                         "attempt": state.get("sql_attempts", 0),
@@ -749,81 +722,14 @@ class DataChatAgent:
         }
 
     @staticmethod
-    def _should_prioritize_sql(state: AgentState) -> bool:
-        text = DataChatAgent._normalize_text(state.get("user_question", ""))
-        if not text:
-            return False
-        python_only_terms = (
-            "anomaly",
-            "correlation",
-            "forecast",
-            "linear regression",
-            "machine learning",
-            "model",
-            "outlier",
-            "predict",
-            "regression",
-            "statistical",
-        )
-        chart_terms = ("chart", "plot", "visual", "visualize", "graph")
-        if any(term in text for term in python_only_terms + chart_terms):
-            return False
-        sql_first_terms = (
-            "average",
-            "avg",
-            "bottom",
-            "count",
-            "detail",
-            "details",
-            "filter",
-            "group",
-            "highest",
-            "list",
-            "lowest",
-            "max",
-            "maximum",
-            "mean",
-            "min",
-            "minimum",
-            "more",
-            "order",
-            "rank",
-            "show",
-            "sort",
-            "sum",
-            "top",
-            "total",
-            "value",
-            "where",
-        )
-        if any(term in text.split() for term in sql_first_terms):
-            return True
-        return DataChatAgent._looks_like_analytical_request(text)
-
-    @staticmethod
     def _fallback_classification(question: str) -> dict[str, Any]:
-        if DataChatAgent._is_question_suggestion_request(question):
-            return {"question_type": "question_suggestions", "requires_chart": False}
-        if DataChatAgent._looks_like_metadata_lookup(question):
-            return {"question_type": "metadata_lookup", "requires_chart": False}
-        lowered = question.lower()
-        if any(term in lowered for term in ("chart", "plot", "visual", "trend", "forecast")):
-            return {"question_type": "requires_chart", "requires_chart": True}
-        if any(term in lowered for term in ("correlation", "regression", "anomaly", "outlier")):
-            return {"question_type": "requires_python", "requires_chart": False}
         return {"question_type": "sql_answerable", "requires_chart": False}
 
     @staticmethod
     def _fallback_plan(question: str, question_type: str) -> dict[str, Any]:
-        if (
-            question_type == "question_suggestions"
-            or DataChatAgent._is_question_suggestion_request(question)
-        ):
+        if question_type == "question_suggestions":
             return DataChatAgent._question_suggestions_plan()
-        if (
-            question_type == "metadata_lookup"
-            or DataChatAgent._looks_like_metadata_lookup(question)
-        ):
+        if question_type == "metadata_lookup":
             return DataChatAgent._metadata_plan()
         if question_type in {"requires_python", "requires_chart"}:
             return {
@@ -844,13 +750,89 @@ class DataChatAgent:
             "clarification_question": None,
         }
 
-    def _is_metadata_request(self, state: AgentState) -> bool:
-        question = state.get("user_question", "")
-        if self._looks_like_metadata_lookup(question):
-            return True
-        if self._is_affirmative_followup(question):
-            return self._recent_context_requested_metadata(state.get("messages", []))
-        return self._looks_like_table_overview(question, state.get("table_columns", {}))
+    async def resolve_ambiguity_with_schema(self, state: AgentState) -> None:
+        add_event(
+            state,
+            "Planning",
+            "running",
+            "Asking the LLM to resolve ambiguous wording against the current schema.",
+        )
+        prompt = [
+            {"role": "system", "content": AMBIGUITY_RESOLVER_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": state["user_question"],
+                        "classification": state.get("classification", {}),
+                        "schema": state.get("schema_context", ""),
+                        "recent_messages": state.get("messages", [])[-8:],
+                    }
+                ),
+            },
+        ]
+        try:
+            interpretation = await self.llm.complete_json(prompt, max_tokens=1400)
+        except Exception as exc:
+            interpretation = {
+                "question_type": "ambiguous",
+                "resolved_question": None,
+                "selected_tables": [],
+                "selected_columns": [],
+                "clarification_question": (
+                    "I can help with that, but I need one more detail first: which "
+                    "table, metric, time period, or grouping should I use?"
+                ),
+                "reasoning_summary": f"LLM schema interpretation failed: {exc}",
+            }
+            state["errors"].append(f"Ambiguity resolution failed: {exc}")
+
+        self._apply_schema_interpretation(state, interpretation)
+        if state.get("question_type") == "ambiguous":
+            add_event(
+                state,
+                "Planning",
+                "warning",
+                "LLM schema interpretation still needs clarification.",
+            )
+        else:
+            add_event(
+                state,
+                "Planning",
+                "completed",
+                f"LLM resolved request as {state['question_type']}.",
+            )
+
+    @staticmethod
+    def _apply_schema_interpretation(state: AgentState, payload: dict[str, Any]) -> None:
+        allowed_question_types = {
+            "question_suggestions",
+            "metadata_lookup",
+            "sql_answerable",
+            "requires_python",
+            "requires_chart",
+            "ambiguous",
+            "impossible",
+        }
+        question_type = str(payload.get("question_type") or "ambiguous").strip()
+        if question_type not in allowed_question_types:
+            question_type = "ambiguous"
+
+        interpretation = {
+            "question_type": question_type,
+            "resolved_question": payload.get("resolved_question"),
+            "selected_tables": payload.get("selected_tables") or [],
+            "selected_columns": payload.get("selected_columns") or [],
+            "clarification_question": payload.get("clarification_question"),
+            "reasoning_summary": payload.get("reasoning_summary") or "",
+        }
+        state["schema_interpretation"] = interpretation
+        state["question_type"] = question_type
+        state.setdefault("classification", {})["question_type"] = question_type
+        if interpretation["clarification_question"]:
+            state["classification"]["clarification_question"] = interpretation[
+                "clarification_question"
+            ]
 
     @staticmethod
     def _metadata_plan() -> dict[str, Any]:
@@ -893,300 +875,6 @@ class DataChatAgent:
                 "metric, time period, or grouping should I use?"
             ),
         }
-
-    @classmethod
-    def _is_question_suggestion_request(cls, state: AgentState | str) -> bool:
-        question = state if isinstance(state, str) else state.get("user_question", "")
-        text = cls._normalize_text(question)
-        if not text:
-            return False
-        exact = {
-            "what kind of question can i ask",
-            "what kind of questions can i ask",
-            "what can i ask",
-            "what can i ask about",
-            "what questions can i ask",
-            "what questions i can ask",
-            "what should i ask",
-            "suggest questions",
-            "suggest some questions",
-            "give me questions",
-            "give me example questions",
-            "show example questions",
-            "sample questions",
-            "example questions",
-            "recommended questions",
-            "recommended analyses",
-            "analysis ideas",
-            "question ideas",
-        }
-        if text in exact:
-            return True
-        phrases = (
-            "kind of question can i ask",
-            "kind of questions can i ask",
-            "questions i can ask",
-            "questions can i ask",
-            "questions could i ask",
-            "questions should i ask",
-            "can i ask about",
-            "what analyses can",
-            "what analysis can",
-            "suggest questions",
-            "suggest queries",
-            "suggest analyses",
-            "example questions",
-            "example prompts",
-            "sample questions",
-            "question ideas",
-            "what should i analyze",
-            "what can you analyze",
-            "what insights can",
-        )
-        if any(phrase in text for phrase in phrases):
-            return True
-
-        tokens = set(text.split())
-        return bool(
-            {"question", "questions", "prompt", "prompts"} & tokens
-            and {"ask", "asking", "suggest", "suggested", "example", "examples"} & tokens
-        )
-
-    @classmethod
-    def _looks_like_metadata_lookup(cls, question: str) -> bool:
-        text = cls._normalize_text(question)
-        if not text:
-            return False
-        if cls._is_affirmative_followup(text):
-            return False
-        exact_metadata_requests = {
-            "data",
-            "tables",
-            "table",
-            "schema",
-            "columns",
-            "sources",
-            "source",
-            "datasets",
-            "dataset",
-            "overview",
-            "summary",
-            "help",
-            "give me an overview",
-            "give me context",
-            "give me a summary",
-            "orient me",
-            "start",
-            "what am i looking at",
-            "what are we looking at",
-            "what do we have",
-            "what is available",
-            "what is here",
-            "what s here",
-            "whats here",
-            "what s in here",
-            "whats in here",
-            "show me around",
-        }
-        if text in exact_metadata_requests:
-            return True
-
-        metadata_phrases = (
-            "available data",
-            "data available",
-            "data catalog",
-            "data dictionary",
-            "data source",
-            "data sources",
-            "dataset overview",
-            "datasets available",
-            "describe the data",
-            "describe tables",
-            "explain the data",
-            "explain these tables",
-            "list columns",
-            "list sources",
-            "list tables",
-            "look at the data",
-            "sample data",
-            "show columns",
-            "show me what is available",
-            "show me what you have",
-            "show sources",
-            "show tables",
-            "source list",
-            "summarize data",
-            "table list",
-            "tell me about the data",
-            "tell me what is here",
-            "tell me what s here",
-            "walk me through the data",
-            "walk me through this",
-            "what are these files",
-            "what are these tables",
-            "what data",
-            "what do these files contain",
-            "what do these tables contain",
-            "what information is available",
-            "what is in the data",
-            "what is in the tables",
-            "what is inside",
-            "what is this data about",
-            "what is the data",
-            "what tables",
-            "which columns",
-            "which data",
-            "which datasets",
-            "which sources",
-            "which tables",
-        )
-        if any(phrase in text for phrase in metadata_phrases):
-            return True
-        if (
-            text.startswith("tell me about ")
-            and len(text.split()) <= 7
-            and not cls._looks_like_analytical_request(text)
-        ):
-            return True
-
-        tokens = set(text.split())
-        metadata_terms = {
-            "catalog",
-            "column",
-            "columns",
-            "data",
-            "database",
-            "databases",
-            "dataset",
-            "datasets",
-            "dictionary",
-            "file",
-            "files",
-            "schema",
-            "sheet",
-            "sheets",
-            "source",
-            "sources",
-            "table",
-            "tables",
-            "workbook",
-            "workbooks",
-        }
-        overview_terms = {
-            "about",
-            "available",
-            "describe",
-            "explain",
-            "list",
-            "overview",
-            "show",
-            "summarize",
-            "summary",
-        }
-        return bool(tokens & metadata_terms and tokens & overview_terms)
-
-    @classmethod
-    def _looks_like_table_overview(
-        cls, question: str, table_columns: dict[str, set[str]] | None
-    ) -> bool:
-        if not table_columns:
-            return False
-        text = cls._normalize_text(question)
-        if not text or cls._looks_like_analytical_request(text):
-            return False
-        overview_prefixes = (
-            "describe",
-            "explain",
-            "show me",
-            "summarize",
-            "tell me about",
-            "what is in",
-            "what is inside",
-            "what does",
-        )
-        if not any(text.startswith(prefix) for prefix in overview_prefixes):
-            return False
-        question_tokens = set(text.split())
-        for table_name, columns in table_columns.items():
-            table_tokens = set(cls._normalize_text(table_name).split())
-            column_tokens = {
-                token
-                for column in columns
-                for token in cls._normalize_text(column).split()
-                if len(token) > 2
-            }
-            if question_tokens & (table_tokens | column_tokens):
-                return True
-        return False
-
-    @staticmethod
-    def _is_affirmative_followup(question: str) -> bool:
-        text = DataChatAgent._normalize_text(question)
-        return text in {
-            "yes",
-            "yeah",
-            "yep",
-            "sure",
-            "ok",
-            "okay",
-            "please",
-            "please do",
-            "do it",
-            "go ahead",
-            "continue",
-            "that one",
-            "the first one",
-        }
-
-    @staticmethod
-    def _recent_context_requested_metadata(messages: list[dict[str, str]]) -> bool:
-        metadata_terms = (
-            "available data",
-            "columns",
-            "data coverage",
-            "data sources",
-            "high level summary",
-            "sample data",
-            "schema",
-            "table names",
-            "tables",
-        )
-        for message in reversed(messages[-8:]):
-            if message.get("role") != "assistant":
-                continue
-            content = DataChatAgent._normalize_text(message.get("content", ""))
-            if any(term in content for term in metadata_terms):
-                return True
-        return False
-
-    @staticmethod
-    def _looks_like_analytical_request(question: str) -> bool:
-        text = DataChatAgent._normalize_text(question)
-        analytical_patterns = (
-            " average ",
-            " avg ",
-            " by ",
-            " compare ",
-            " correlation ",
-            " forecast ",
-            " group ",
-            " highest ",
-            " lowest ",
-            " rank ",
-            " sum ",
-            " top ",
-            " total ",
-            " trend ",
-            " where ",
-        )
-        padded = f" {text} "
-        return any(pattern in padded for pattern in analytical_patterns)
-
-    @staticmethod
-    def _normalize_text(value: str) -> str:
-        lowered = value.lower().strip()
-        normalized = re.sub(r"[^a-z0-9]+", " ", lowered)
-        return re.sub(r"\s+", " ", normalized).strip()
 
     async def _build_question_suggestions_response(self, state: AgentState) -> dict[str, Any]:
         schema = await self.catalog.get_schema(state.get("selected_data_sources"))
@@ -1641,19 +1329,13 @@ class DataChatAgent:
 
     @staticmethod
     def _exposed_sql_query(state: AgentState) -> str | None:
-        if state.get("python_result", {}).get("ok"):
-            return None
-        if not state.get("sql_result"):
-            return None
-        return state.get("sql_query") or None
+        sql_query = (state.get("sql_query") or "").strip()
+        return sql_query or None
 
     @staticmethod
     def _exposed_python_code(state: AgentState) -> str | None:
-        if not state.get("python_code"):
-            return None
-        if state.get("python_result", {}).get("ok"):
-            return state.get("python_code")
-        return None
+        python_code = (state.get("python_code") or "").strip()
+        return python_code or None
 
     async def _compose_final_with_fallback(self, state: AgentState) -> dict[str, Any]:
         python_answer = state.get("python_result", {}).get("answer")

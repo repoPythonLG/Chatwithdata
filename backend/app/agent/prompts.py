@@ -23,6 +23,8 @@ Treat broad or exploratory questions about the available data as metadata_lookup
 ambiguous. Examples include requests for an overview, schema, table list, columns,
 sample data, data dictionary, source list, "what data is available?", or a short
 confirmation after the assistant offered to summarize the data.
+Tolerate spelling mistakes and word-spacing mistakes. If the intent is recognizable,
+do not classify as ambiguous only because of typos.
 """
 
 PLANNER_SYSTEM = """You are planning a safe data-analysis answer.
@@ -44,6 +46,30 @@ Use question_suggestions when the user asks what questions they can ask, asks fo
 example prompts, or asks for recommended analyses. Use metadata for broad exploratory
 questions about available data, tables, columns, schema, samples, or data sources.
 Do not ask for clarification when the metadata catalog can provide a useful overview.
+schema_interpretation contains the LLM's schema-grounded reading of ambiguous
+wording when an ambiguity-resolution pass was needed.
+"""
+
+AMBIGUITY_RESOLVER_SYSTEM = """You resolve ambiguous or typo-heavy user wording against
+the current data schema and conversation context.
+Return JSON only:
+{
+  "question_type": "question_suggestions" | "metadata_lookup" | "sql_answerable" | "requires_python" | "requires_chart" | "ambiguous" | "impossible",
+  "resolved_question": "clear restatement of the user's intended question, or null",
+  "selected_tables": ["canonical table names that appear relevant"],
+  "selected_columns": ["canonical column names that appear relevant"],
+  "clarification_question": "question to ask the user if still ambiguous, otherwise null",
+  "reasoning_summary": "brief execution-safe summary, not hidden chain-of-thought"
+}
+Use the schema, sample rows, and recent messages to infer likely table and column
+references, including misspellings, spacing mistakes, and casual wording. If the
+question is answerable from the schema, choose sql_answerable, requires_python,
+requires_chart, metadata_lookup, or question_suggestions instead of ambiguous.
+Prefer sql_answerable for simple lookups, distinct values, filters, grouping,
+ranking, totals, averages, minimums, maximums, joins, and tabular summaries.
+Only return ambiguous when multiple materially different interpretations remain
+and choosing one would risk a wrong answer. Do not invent tables or columns.
+Do not reveal hidden chain-of-thought.
 """
 
 QUESTION_SUGGESTIONS_SYSTEM = """You are a corporate data analyst helping a user discover
@@ -145,6 +171,8 @@ Rules:
 - Use only tables and columns from the provided schema.
 - Use the recent conversation to resolve follow-up wording such as "more details",
   "highest value", "that table", or "order it".
+- Use schema_interpretation when present as the LLM's schema-grounded reading of
+  ambiguous or typo-heavy wording.
 - Use canonical table and column names exactly.
 - Quote canonical table names and column names with double quotes.
 - Use SELECT/WITH only. No DDL, DML, PRAGMA, ATTACH, COPY, LOAD, INSTALL, file or network functions.
@@ -173,6 +201,8 @@ Return JSON only:
 }
 Rules:
 - Check whether the SQL directly answers the user's question and recent follow-up context.
+- Use schema_interpretation when present to understand how ambiguous wording was
+  resolved against the schema.
 - Check table names, column names, joins, filters, sorting, aggregation, limits, and quoting.
 - Use only the provided schema and sample rows. Do not invent tables or columns.
 - Reject double-escaped identifiers, malformed quoting, wrong table aliases, unsupported
@@ -193,6 +223,8 @@ Rules:
 - Prefer SQL through query(sql) for aggregations, joins, filtering, sorting, and
   numeric summaries. Do not use Python for work that a single SQL query can answer.
 - Use the provided tables list to discover available canonical table names and columns.
+- Use schema_interpretation when present as the schema-grounded interpretation of
+  ambiguous or typo-heavy wording.
 - Do not hardcode or invent table names outside the provided tables list.
 - Quote DuckDB table and column identifiers with double quotes in SQL strings.
 - Do not read or write files.

@@ -89,12 +89,18 @@ class PythonGuard:
     def validate(self, code: str) -> PythonValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
+        stripped_code = code.lstrip().lower()
+        if stripped_code.startswith(("select ", "with ")):
+            errors.append(
+                "Python generator returned raw SQL. Wrap SQL in query(...) or use the SQL tool."
+            )
         if len(code) > self.max_chars:
             errors.append(f"Python code is too large ({len(code)} chars > {self.max_chars}).")
         try:
             tree = ast.parse(code)
         except SyntaxError as exc:
-            return PythonValidationResult(False, [f"Python syntax error: {exc}"])
+            errors.append(f"Python syntax error: {exc}")
+            return PythonValidationResult(False, sorted(set(errors)))
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):

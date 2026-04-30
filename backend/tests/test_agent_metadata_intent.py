@@ -1,53 +1,6 @@
 from app.agent.graph import DataChatAgent
 
 
-def test_broad_data_questions_are_metadata_lookup() -> None:
-    assert DataChatAgent._looks_like_metadata_lookup("tell me about the data")
-    assert DataChatAgent._looks_like_metadata_lookup("what is the data in the tables")
-    assert DataChatAgent._looks_like_metadata_lookup("show tables and columns")
-    assert DataChatAgent._looks_like_metadata_lookup("what am I looking at?")
-    assert DataChatAgent._looks_like_metadata_lookup("walk me through this")
-
-
-def test_question_suggestion_requests_are_separate_from_metadata_overview() -> None:
-    assert DataChatAgent._is_question_suggestion_request("What questions can I ask?")
-    assert DataChatAgent._is_question_suggestion_request(
-        "what kind of questions I can ask about the data"
-    )
-    assert DataChatAgent._is_question_suggestion_request(
-        "what questions I can ask about these files"
-    )
-    assert DataChatAgent._is_question_suggestion_request("Give me example prompts")
-    assert not DataChatAgent._looks_like_metadata_lookup("What can I ask about?")
-
-
-def test_affirmative_followup_resolves_to_metadata_when_context_offered_summary() -> None:
-    messages = [
-        {
-            "role": "assistant",
-            "content": "Are you looking for a high-level summary of all tables and columns?",
-        },
-        {"role": "user", "content": "yes"},
-    ]
-
-    assert DataChatAgent._is_affirmative_followup("yes")
-    assert DataChatAgent._recent_context_requested_metadata(messages)
-
-
-def test_analytical_questions_are_not_forced_to_metadata() -> None:
-    assert not DataChatAgent._looks_like_metadata_lookup("top 5 customers by revenue")
-    assert DataChatAgent._looks_like_analytical_request("top 5 customers by revenue")
-
-
-def test_known_table_overview_is_metadata_without_capturing_analytics() -> None:
-    table_columns = {"sales_orders": {"order_id", "customer_id", "revenue"}}
-
-    assert DataChatAgent._looks_like_table_overview("describe orders", table_columns)
-    assert not DataChatAgent._looks_like_table_overview(
-        "show revenue by customer", table_columns
-    )
-
-
 def test_sql_validation_repairs_twice_then_falls_back_to_python() -> None:
     agent = DataChatAgent.__new__(DataChatAgent)
 
@@ -99,7 +52,7 @@ def test_critique_routes_to_sql_repair_then_python_when_sql_is_exhausted() -> No
     )
 
 
-def test_route_after_plan_keeps_standard_tabular_requests_on_sql() -> None:
+def test_route_after_plan_respects_llm_tool_choice() -> None:
     agent = DataChatAgent.__new__(DataChatAgent)
     state = {
         "user_question": "provide more details and order by highest value",
@@ -107,5 +60,73 @@ def test_route_after_plan_keeps_standard_tabular_requests_on_sql() -> None:
         "execution_plan": {"tool": "python"},
     }
 
+    assert agent.route_after_plan(state) == "python"
+    assert state["execution_plan"]["tool"] == "python"
+
+
+def test_route_after_plan_uses_planned_sql_even_when_classifier_preferred_chart() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+    state = {
+        "user_question": "show it in table",
+        "question_type": "requires_chart",
+        "execution_plan": {"tool": "sql"},
+    }
+
     assert agent.route_after_plan(state) == "sql"
-    assert state["execution_plan"]["tool"] == "sql"
+
+
+def test_generated_logic_is_exposed_for_advanced_ui_even_after_fallback() -> None:
+    state = {
+        "sql_query": "SELECT amount FROM spend ORDER BY amount DESC LIMIT 10",
+        "python_code": "result = query('SELECT AVG(amount) AS mean_amount FROM spend')",
+        "python_result": {"ok": True},
+    }
+
+    assert DataChatAgent._exposed_sql_query(state) == state["sql_query"]
+    assert DataChatAgent._exposed_python_code(state) == state["python_code"]
+
+
+def test_blank_generated_logic_is_not_exposed() -> None:
+    assert DataChatAgent._exposed_sql_query({"sql_query": "   "}) is None
+    assert DataChatAgent._exposed_python_code({"python_code": ""}) is None
+
+
+def test_llm_schema_interpretation_can_resolve_ambiguous_to_sql() -> None:
+    state = {"question_type": "ambiguous", "classification": {"question_type": "ambiguous"}}
+    DataChatAgent._apply_schema_interpretation(
+        state,
+        {
+            "question_type": "sql_answerable",
+            "resolved_question": "List the distinct warehouse values.",
+            "selected_tables": ["example_inventory_quality__inventory"],
+            "selected_columns": ["warehouse"],
+            "clarification_question": None,
+            "reasoning_summary": "The LLM resolved the typo-heavy wording using schema context.",
+        },
+    )
+
+    assert state["question_type"] == "sql_answerable"
+    assert state["classification"]["question_type"] == "sql_answerable"
+    assert state["schema_interpretation"] == {
+        "question_type": "sql_answerable",
+        "resolved_question": "List the distinct warehouse values.",
+        "selected_tables": ["example_inventory_quality__inventory"],
+        "selected_columns": ["warehouse"],
+        "clarification_question": None,
+        "reasoning_summary": "The LLM resolved the typo-heavy wording using schema context.",
+    }
+
+
+def test_invalid_llm_schema_interpretation_stays_ambiguous() -> None:
+    state = {"question_type": "ambiguous", "classification": {"question_type": "ambiguous"}}
+    DataChatAgent._apply_schema_interpretation(
+        state,
+        {
+            "question_type": "not_a_valid_type",
+            "resolved_question": None,
+            "clarification_question": "Which field should I use?",
+        },
+    )
+
+    assert state["question_type"] == "ambiguous"
+    assert state["classification"]["clarification_question"] == "Which field should I use?"

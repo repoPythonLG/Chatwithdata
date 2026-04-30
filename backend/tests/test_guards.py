@@ -44,3 +44,11 @@ def test_python_guard_blocks_unsafe_imports_and_calls():
 
     assert not result.is_valid
     assert any("Import is not allowed" in error for error in result.errors)
+
+
+def test_python_guard_rejects_raw_sql_text():
+    guard = PythonGuard(max_chars=2000)
+    result = guard.validate("SELECT * FROM sales__orders")
+
+    assert not result.is_valid
+    assert any("returned raw SQL" in error for error in result.errors)

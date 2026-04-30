@@ -10,6 +10,7 @@ class AgentState(TypedDict, total=False):
     selected_data_sources: list[str] | None
     schema_context: str
     table_columns: dict[str, set[str]]
+    schema_interpretation: dict[str, Any]
     question_type: str
     classification: dict[str, Any]
     execution_plan: dict[str, Any]
