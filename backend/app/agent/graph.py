@@ -15,6 +15,8 @@ from app.agent.prompts import (
     FINAL_SYSTEM,
     PLANNER_SYSTEM,
     PYTHON_SYSTEM,
+    QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
+    QUESTION_SUGGESTIONS_SYSTEM,
     SQL_SYSTEM,
 )
 from app.agent.python_guard import PythonGuard
@@ -140,6 +142,19 @@ class DataChatAgent:
 
     async def classify_question(self, state: AgentState) -> AgentState:
         add_event(state, "Planning", "running", "Classifying the analysis request.")
+        if self._is_question_suggestion_request(state):
+            classification = {
+                "question_type": "question_suggestions",
+                "requires_chart": False,
+                "reasoning_summary": (
+                    "Detected a request for suggested questions grounded in the schema."
+                ),
+            }
+            state["classification"] = classification
+            state["question_type"] = "question_suggestions"
+            add_event(state, "Planning", "completed", "Classified as question_suggestions.")
+            return state
+
         if self._is_metadata_request(state):
             classification = {
                 "question_type": "metadata_lookup",
@@ -201,6 +216,14 @@ class DataChatAgent:
                 "clarification_question": None,
             }
             add_event(state, "Planning", "warning", "No usable data sources are configured.")
+            return state
+
+        if (
+            state.get("question_type") == "question_suggestions"
+            or self._is_question_suggestion_request(state)
+        ):
+            state["execution_plan"] = self._question_suggestions_plan()
+            add_event(state, "Planning", "completed", "Plan selected LLM question suggestions.")
             return state
 
         if state.get("question_type") == "metadata_lookup" or self._is_metadata_request(state):
@@ -453,6 +476,14 @@ class DataChatAgent:
             artifacts = final.pop("artifacts", artifacts)
             source_refs = final.pop("sources", source_refs)
 
+        elif (
+            state.get("execution_plan", {}).get("tool") == "question_suggestions"
+            or state.get("question_type") == "question_suggestions"
+        ):
+            final = await self._build_question_suggestions_response(state)
+            artifacts = final.pop("artifacts", artifacts)
+            source_refs = final.pop("sources", source_refs)
+
         elif state.get("execution_plan", {}).get("tool") == "numeric_profile":
             final = await self._build_numeric_extrema_response(state)
             artifacts = final.pop("artifacts", artifacts)
@@ -489,7 +520,7 @@ class DataChatAgent:
 
     def route_after_plan(self, state: AgentState) -> str:
         tool = state.get("execution_plan", {}).get("tool", "sql")
-        if tool in {"metadata", "numeric_profile"}:
+        if tool in {"question_suggestions", "metadata", "numeric_profile"}:
             return "final"
         if tool == "python" or state.get("question_type") in {"requires_python", "requires_chart"}:
             return "python"
@@ -540,6 +571,8 @@ class DataChatAgent:
 
     @staticmethod
     def _fallback_classification(question: str) -> dict[str, Any]:
+        if DataChatAgent._is_question_suggestion_request(question):
+            return {"question_type": "question_suggestions", "requires_chart": False}
         if DataChatAgent._looks_like_metadata_lookup(question):
             return {"question_type": "metadata_lookup", "requires_chart": False}
         lowered = question.lower()
@@ -551,6 +584,11 @@ class DataChatAgent:
 
     @staticmethod
     def _fallback_plan(question: str, question_type: str) -> dict[str, Any]:
+        if (
+            question_type == "question_suggestions"
+            or DataChatAgent._is_question_suggestion_request(question)
+        ):
+            return DataChatAgent._question_suggestions_plan()
         if (
             question_type == "metadata_lookup"
             or DataChatAgent._looks_like_metadata_lookup(question)
@@ -597,6 +635,20 @@ class DataChatAgent:
         }
 
     @staticmethod
+    def _question_suggestions_plan() -> dict[str, Any]:
+        return {
+            "tool": "question_suggestions",
+            "steps": [
+                "Inspect current metadata catalog",
+                "Ask the LLM to generate schema-grounded question ideas",
+                "Critique the suggestions against available tables and columns",
+                "Return polished examples with likely outputs",
+            ],
+            "requires_chart": False,
+            "clarification_question": None,
+        }
+
+    @staticmethod
     def _numeric_extrema_plan() -> dict[str, Any]:
         return {
             "tool": "numeric_profile",
@@ -624,6 +676,50 @@ class DataChatAgent:
                 "metric, time period, or grouping should I use?"
             ),
         }
+
+    @classmethod
+    def _is_question_suggestion_request(cls, state: AgentState | str) -> bool:
+        question = state if isinstance(state, str) else state.get("user_question", "")
+        text = cls._normalize_text(question)
+        if not text:
+            return False
+        exact = {
+            "what can i ask",
+            "what can i ask about",
+            "what questions can i ask",
+            "what should i ask",
+            "suggest questions",
+            "suggest some questions",
+            "give me questions",
+            "give me example questions",
+            "show example questions",
+            "sample questions",
+            "example questions",
+            "recommended questions",
+            "recommended analyses",
+            "analysis ideas",
+            "question ideas",
+        }
+        if text in exact:
+            return True
+        phrases = (
+            "questions can i ask",
+            "can i ask about",
+            "what analyses can",
+            "what analysis can",
+            "suggest questions",
+            "suggest queries",
+            "suggest analyses",
+            "example questions",
+            "example prompts",
+            "sample questions",
+            "question ideas",
+            "questions should i ask",
+            "what should i analyze",
+            "what can you analyze",
+            "what insights can",
+        )
+        return any(phrase in text for phrase in phrases)
 
     def _is_numeric_extrema_request(self, state: AgentState) -> bool:
         text = self._normalize_text(state.get("user_question", ""))
@@ -699,8 +795,6 @@ class DataChatAgent:
             "give me a summary",
             "orient me",
             "start",
-            "what can i ask",
-            "what can i ask about",
             "what am i looking at",
             "what are we looking at",
             "what do we have",
@@ -911,6 +1005,246 @@ class DataChatAgent:
         lowered = value.lower().strip()
         normalized = re.sub(r"[^a-z0-9]+", " ", lowered)
         return re.sub(r"\s+", " ", normalized).strip()
+
+    async def _build_question_suggestions_response(self, state: AgentState) -> dict[str, Any]:
+        schema = await self.catalog.get_schema(state.get("selected_data_sources"))
+        schema_payload = self._friendly_schema_payload(schema)
+        add_event(
+            state,
+            "Generating answer",
+            "running",
+            "Asking the LLM for schema-grounded question suggestions.",
+        )
+        prompt = [
+            {"role": "system", "content": QUESTION_SUGGESTIONS_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_question": state.get("user_question"),
+                        "schema": schema_payload,
+                        "recent_messages": state.get("messages", [])[-6:],
+                    }
+                ),
+            },
+        ]
+        try:
+            generated = await self.llm.complete_json(prompt, max_tokens=2400)
+        except Exception as exc:
+            add_event(
+                state,
+                "Generating answer",
+                "error",
+                "LLM question suggestion generation failed.",
+                error=str(exc),
+            )
+            return {
+                "answer": (
+                    "I could not generate schema-grounded question suggestions because the "
+                    "model endpoint was unavailable."
+                ),
+                "reasoning_summary": (
+                    "Inspected the schema, but the LLM did not return suggested questions."
+                ),
+                "caveats": [str(exc)],
+                "confidence": "low",
+                "artifacts": [],
+                "sources": [],
+            }
+
+        generated = self._normalize_question_suggestion_payload(generated)
+        add_event(
+            state,
+            "Generating answer",
+            "completed",
+            f"Generated {len(generated.get('questions', []))} suggested question(s).",
+        )
+
+        add_event(
+            state,
+            "Critiquing answer",
+            "running",
+            "Checking suggested questions against the available schema.",
+        )
+        critique_prompt = [
+            {"role": "system", "content": QUESTION_SUGGESTIONS_CRITIC_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_question": state.get("user_question"),
+                        "schema": schema_payload,
+                        "draft": generated,
+                    }
+                ),
+            },
+        ]
+        try:
+            critique = await self.llm.complete_json(critique_prompt, max_tokens=2400)
+        except Exception as exc:
+            critique = {
+                "passes": True,
+                "confidence": generated.get("confidence", "medium"),
+                "summary": f"Critique model was unavailable: {exc}",
+                "caveats": [f"Automated critique was unavailable: {exc}"],
+                "revised_answer": None,
+                "revised_questions": [],
+            }
+
+        if critique.get("revised_answer"):
+            generated["answer"] = critique["revised_answer"]
+        if critique.get("revised_questions"):
+            generated["questions"] = self._clean_question_rows(critique["revised_questions"])
+        caveats = [
+            *self._unique_strings(generated.get("caveats") or []),
+            *self._unique_strings(critique.get("caveats") or []),
+        ]
+        caveats = self._unique_strings(caveats)
+        confidence = critique.get("confidence") or generated.get("confidence") or "medium"
+        state["critique"] = {
+            "passes": bool(critique.get("passes", True)),
+            "confidence": confidence,
+            "caveats": caveats,
+            "summary": critique.get("summary", "Question suggestions reviewed."),
+            "needs_repair": False,
+            "repair_tool": None,
+        }
+        add_event(
+            state,
+            "Critiquing answer",
+            "completed" if critique.get("passes", True) else "warning",
+            state["critique"]["summary"],
+        )
+
+        questions = self._clean_question_rows(generated.get("questions", []))
+        answer = self._format_question_suggestion_answer(generated.get("answer", ""), questions)
+        artifacts = []
+        if questions:
+            artifacts.append(
+                {
+                    "type": "table",
+                    "title": "Suggested Questions",
+                    "columns": ["Category", "Question", "Why it helps", "Likely tables", "Output"],
+                    "rows": questions[: self.settings.sql_preview_row_limit],
+                    "truncated": len(questions) > self.settings.sql_preview_row_limit,
+                }
+            )
+
+        return {
+            "answer": answer,
+            "reasoning_summary": (
+                "Used the current metadata catalog as context, asked the LLM to generate "
+                "question ideas, then critiqued the suggestions against the available schema."
+            ),
+            "caveats": caveats,
+            "confidence": confidence if confidence in {"low", "medium", "high"} else "medium",
+            "artifacts": artifacts,
+            "sources": [],
+        }
+
+    @staticmethod
+    def _format_question_suggestion_answer(intro: str, questions: list[dict[str, Any]]) -> str:
+        lines = [intro.strip()] if intro and intro.strip() else []
+        if not questions:
+            return "\n\n".join(lines) or "I could not generate supported question ideas."
+
+        if lines:
+            lines.append("")
+        lines.append("Here are specific questions you can ask:")
+        for row in questions[:10]:
+            category = row.get("Category", "Analysis")
+            question = row.get("Question", "")
+            output = row.get("Output", "narrative")
+            lines.append(f"- {category}: {question} ({output})")
+        lines.append("")
+        lines.append(
+            "I also included a table below with why each question is useful and which "
+            "tables it uses."
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _friendly_schema_payload(schema: Any) -> dict[str, Any]:
+        source_by_id = {source.id: source for source in schema.data_sources}
+        tables = []
+        for table in schema.tables:
+            source = source_by_id.get(table.data_source_id)
+            tables.append(
+                {
+                    "source": DataChatAgent._friendly_name(
+                        source.name if source else table.data_source_id
+                    ),
+                    "source_type": source.source_type if source else "",
+                    "table": table.original_name,
+                    "kind": table.kind,
+                    "row_count": table.row_count,
+                    "columns": [
+                        {
+                            "name": column.original_name,
+                            "type": column.data_type,
+                            "sample_values": column.sample_values[:8],
+                        }
+                        for column in table.columns
+                    ],
+                    "sample_rows": table.sample_rows[:3],
+                }
+            )
+        display_names = {table.canonical_name: table.original_name for table in schema.tables}
+        relationships = [
+            {
+                "left_table": display_names.get(rel.left_table, rel.left_table),
+                "left_column": rel.left_column,
+                "right_table": display_names.get(rel.right_table, rel.right_table),
+                "right_column": rel.right_column,
+                "confidence": rel.confidence,
+                "evidence": rel.evidence,
+            }
+            for rel in schema.relationships
+        ]
+        return {"tables": tables, "relationships": relationships}
+
+    @staticmethod
+    def _unique_strings(values: list[Any]) -> list[str]:
+        unique = []
+        seen = set()
+        for value in values:
+            rendered = str(value)
+            if rendered in seen:
+                continue
+            seen.add(rendered)
+            unique.append(rendered)
+        return unique
+
+    @staticmethod
+    def _normalize_question_suggestion_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        payload["questions"] = DataChatAgent._clean_question_rows(payload.get("questions", []))
+        if payload.get("confidence") not in {"low", "medium", "high"}:
+            payload["confidence"] = "medium"
+        if not isinstance(payload.get("caveats"), list):
+            payload["caveats"] = []
+        return payload
+
+    @staticmethod
+    def _clean_question_rows(rows: Any) -> list[dict[str, Any]]:
+        cleaned = []
+        if not isinstance(rows, list):
+            return cleaned
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            likely_tables = row.get("likely_tables") or row.get("Likely tables") or []
+            if isinstance(likely_tables, str):
+                likely_tables = [item.strip() for item in likely_tables.split(",") if item.strip()]
+            cleaned.append(
+                {
+                    "Category": str(row.get("category") or row.get("Category") or "Analysis"),
+                    "Question": str(row.get("question") or row.get("Question") or "").strip(),
+                    "Why it helps": str(row.get("why") or row.get("Why it helps") or "").strip(),
+                    "Likely tables": ", ".join(str(item) for item in likely_tables),
+                    "Output": str(row.get("output") or row.get("Output") or "narrative"),
+                }
+            )
+        return [row for row in cleaned if row["Question"]]
 
     async def _build_numeric_extrema_response(self, state: AgentState) -> dict[str, Any]:
         schema = await self.catalog.get_schema(state.get("selected_data_sources"))

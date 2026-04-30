@@ -4,10 +4,15 @@ from app.agent.graph import DataChatAgent
 def test_broad_data_questions_are_metadata_lookup() -> None:
     assert DataChatAgent._looks_like_metadata_lookup("tell me about the data")
     assert DataChatAgent._looks_like_metadata_lookup("what is the data in the tables")
-    assert DataChatAgent._looks_like_metadata_lookup("What can I ask about?")
     assert DataChatAgent._looks_like_metadata_lookup("show tables and columns")
     assert DataChatAgent._looks_like_metadata_lookup("what am I looking at?")
     assert DataChatAgent._looks_like_metadata_lookup("walk me through this")
+
+
+def test_question_suggestion_requests_are_separate_from_metadata_overview() -> None:
+    assert DataChatAgent._is_question_suggestion_request("What questions can I ask?")
+    assert DataChatAgent._is_question_suggestion_request("Give me example prompts")
+    assert not DataChatAgent._looks_like_metadata_lookup("What can I ask about?")
 
 
 def test_affirmative_followup_resolves_to_metadata_when_context_offered_summary() -> None:
