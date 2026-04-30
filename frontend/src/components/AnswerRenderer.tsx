@@ -88,6 +88,8 @@ function FormattedAnswer({ text }: { text: string }) {
               </li>
             ))}
           </ul>
+        ) : block.type === "table" ? (
+          <AnswerTable block={block} key={index} />
         ) : (
           <p className={index === 0 ? "text-lg font-semibold" : ""} key={index}>
             {block.text}
@@ -100,11 +102,13 @@ function FormattedAnswer({ text }: { text: string }) {
 
 type AnswerBlock =
   | { type: "paragraph"; text: string }
-  | { type: "list"; items: string[] };
+  | { type: "list"; items: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] };
 
 function toBlocks(text: string): AnswerBlock[] {
   const blocks: AnswerBlock[] = [];
   let pendingList: string[] = [];
+  let pendingTableRows: string[][] = [];
 
   function flushList() {
     if (pendingList.length) {
@@ -113,22 +117,103 @@ function toBlocks(text: string): AnswerBlock[] {
     }
   }
 
+  function flushTable() {
+    if (!pendingTableRows.length) return;
+
+    const separatorIndex = pendingTableRows.findIndex(isSeparatorRow);
+    const headerIndex = separatorIndex > 0 ? separatorIndex - 1 : 0;
+    const headers = normalizeRow(pendingTableRows[headerIndex]);
+    const bodyRows =
+      separatorIndex >= 0
+        ? pendingTableRows.slice(separatorIndex + 1)
+        : pendingTableRows.slice(headerIndex + 1);
+    const rows = bodyRows.filter((row) => !isSeparatorRow(row)).map(normalizeRow);
+
+    if (headers.length && rows.length) {
+      blocks.push({ type: "table", headers, rows });
+    } else {
+      pendingTableRows.forEach((row) =>
+        blocks.push({ type: "paragraph", text: row.join(" | ") })
+      );
+    }
+    pendingTableRows = [];
+  }
+
   text.split("\n").forEach((rawLine) => {
     const line = rawLine.trim();
     if (!line) {
       flushList();
       return;
     }
+    if (isMarkdownTableRow(line)) {
+      flushList();
+      pendingTableRows.push(parseMarkdownTableRow(line));
+      return;
+    }
     if (line.startsWith("- ")) {
+      flushTable();
       pendingList.push(line.slice(2));
       return;
     }
+    flushTable();
     flushList();
     blocks.push({ type: "paragraph", text: line });
   });
+  flushTable();
   flushList();
 
   return blocks;
+}
+
+function AnswerTable({ block }: { block: Extract<AnswerBlock, { type: "table" }> }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-ink-100 bg-white/70 dark:border-white/10 dark:bg-white/5">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-sm">
+          <thead className="bg-ink-50 text-xs uppercase tracking-wide text-ink-500 dark:bg-ink-900 dark:text-ink-100">
+            <tr>
+              {block.headers.map((header, index) => (
+                <th className="px-4 py-3 font-semibold" key={`${header}-${index}`}>
+                  {header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr className="border-t border-ink-100 dark:border-white/10" key={rowIndex}>
+                {block.headers.map((_, columnIndex) => (
+                  <td className="whitespace-nowrap px-4 py-3" key={columnIndex}>
+                    {row[columnIndex] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function isMarkdownTableRow(line: string) {
+  return line.startsWith("|") && line.endsWith("|") && line.length > 2;
+}
+
+function parseMarkdownTableRow(line: string) {
+  return line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function isSeparatorRow(row: string[]) {
+  return row.length > 0 && row.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function normalizeRow(row: string[]) {
+  return row.map((cell) => cell.trim());
 }
 
 function CodeBlock({ title, code }: { title: string; code: string }) {
