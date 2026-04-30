@@ -64,10 +64,14 @@ class SqlGuard:
             if func.sql_name().lower() in self.blocked_functions:
                 errors.append(f"Function {func.sql_name()} is not allowed.")
 
+        cte_names = {cte.alias for cte in tree.find_all(exp.CTE) if cte.alias}
         referenced_tables: list[str] = []
         aliases: dict[str, str] = {}
         for table in tree.find_all(exp.Table):
             table_name = table.name
+            if table_name in cte_names:
+                aliases[table.alias_or_name] = table_name
+                continue
             referenced_tables.append(table_name)
             alias = table.alias_or_name
             aliases[alias] = table_name
@@ -92,6 +96,8 @@ class SqlGuard:
             qualifier = column.table
             if qualifier:
                 table_name = aliases.get(qualifier, qualifier)
+                if table_name in cte_names:
+                    continue
                 if table_name in table_columns and column_name not in table_columns[table_name]:
                     errors.append(f"Unknown column: {qualifier}.{column_name}")
                 used_columns.setdefault(table_name, set()).add(column_name)
@@ -99,6 +105,7 @@ class SqlGuard:
                 referenced_tables
                 and column_name not in available_columns
                 and column_name not in projection_aliases
+                and not cte_names
             ):
                 errors.append(f"Unknown unqualified column: {column_name}")
 

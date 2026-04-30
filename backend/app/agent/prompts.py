@@ -11,6 +11,9 @@ Allowed question_type values:
 
 Classify requests asking what the user can ask, suggested questions, example prompts,
 recommended analyses, or analysis ideas as question_suggestions.
+Classify standard tabular analysis as sql_answerable, including counts, sums,
+averages/means, minimums, maximums, numeric column summaries, filtering, grouping,
+ranking, and joins. Do not classify these as requires_python.
 Treat broad or exploratory questions about the available data as metadata_lookup, not
 ambiguous. Examples include requests for an overview, schema, table list, columns,
 sample data, data dictionary, source list, "what data is available?", or a short
@@ -26,6 +29,10 @@ Return JSON only with:
   "clarification_question": string | null
 }
 Use concise summaries, not private chain-of-thought.
+Prefer SQL for lookups, filtering, grouping, joins, rankings, counts, sums,
+averages, minimums, maximums, and other standard tabular analysis. Use Python only
+for analyses that SQL cannot reasonably express, such as statistical modeling,
+multi-step custom algorithms, or advanced chart construction.
 Use question_suggestions when the user asks what questions they can ask, asks for
 example prompts, or asks for recommended analyses. Use metadata for broad exploratory
 questions about available data, tables, columns, schema, samples, or data sources.
@@ -95,10 +102,18 @@ Return JSON only: {"sql": "...", "reasoning_summary": "..."}.
 Rules:
 - Use only tables and columns from the provided schema.
 - Use canonical table and column names exactly.
+- Quote canonical table names and column names with double quotes.
 - Use SELECT/WITH only. No DDL, DML, PRAGMA, ATTACH, COPY, LOAD, INSTALL, file or network functions.
 - Avoid SELECT * except tiny previews.
 - Add sensible LIMITs for detail listings.
 - Prefer explicit joins and aliases.
+- For broad requests such as "means for numerical columns", "maximum values", or
+  "numeric summaries", generate one read-only SQL query that returns a tidy result
+  table with dataset/table/column labels and aggregate values. Use UNION ALL or CTEs
+  where appropriate.
+- Exclude identifier-like numeric columns (for example id, *_id, transaction_id,
+  order_id, inspection_id) from generic numeric summaries unless the user explicitly
+  asks for identifiers.
 - If the question cannot be answered, return empty SQL and a concise reason.
 """
 
@@ -109,6 +124,11 @@ Available runtime:
 - tables is a list of {"name": table_name, "columns": [...]}.
 - pd, np, duckdb, math, statistics are already available.
 Rules:
+- Prefer SQL through query(sql) for aggregations, joins, filtering, sorting, and
+  numeric summaries. Do not use Python for work that a single SQL query can answer.
+- Use the provided tables list to discover available canonical table names and columns.
+- Do not hardcode or invent table names outside the provided tables list.
+- Quote DuckDB table and column identifiers with double quotes in SQL strings.
 - Do not read or write files.
 - Do not use network, subprocess, shell, sockets, environment variables, or unsafe imports.
 - Use query(sql) to load only the data needed.

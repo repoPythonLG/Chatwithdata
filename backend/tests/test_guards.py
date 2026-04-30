@@ -21,6 +21,23 @@ def test_sql_guard_rejects_mutation():
     assert result.errors
 
 
+def test_sql_guard_accepts_cte_aliases_for_readonly_queries():
+    guard = SqlGuard()
+    result = guard.validate(
+        """
+        WITH means AS (
+            SELECT 'revenue' AS column_name, AVG("revenue") AS mean_value
+            FROM "sales__orders"
+        )
+        SELECT column_name, mean_value FROM means
+        """,
+        {"sales__orders": {"revenue"}},
+    )
+
+    assert result.is_valid
+    assert result.used_tables == ["sales__orders"]
+
+
 def test_python_guard_blocks_unsafe_imports_and_calls():
     guard = PythonGuard(max_chars=2000)
     result = guard.validate("import os\nos.system('rm -rf /')\n")

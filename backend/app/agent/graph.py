@@ -231,11 +231,6 @@ class DataChatAgent:
             add_event(state, "Planning", "completed", "Plan selected metadata catalog summary.")
             return state
 
-        if self._is_numeric_extrema_request(state):
-            state["execution_plan"] = self._numeric_extrema_plan()
-            add_event(state, "Planning", "completed", "Plan selected numeric extrema profiling.")
-            return state
-
         if state.get("question_type") == "ambiguous":
             state["execution_plan"] = self._clarification_plan(state)
             add_event(
@@ -484,11 +479,6 @@ class DataChatAgent:
             artifacts = final.pop("artifacts", artifacts)
             source_refs = final.pop("sources", source_refs)
 
-        elif state.get("execution_plan", {}).get("tool") == "numeric_profile":
-            final = await self._build_numeric_extrema_response(state)
-            artifacts = final.pop("artifacts", artifacts)
-            source_refs = final.pop("sources", source_refs)
-
         elif state.get("execution_plan", {}).get("tool") in {"none", "clarify"}:
             answer = (
                 state.get("execution_plan", {}).get("clarification_question")
@@ -507,7 +497,7 @@ class DataChatAgent:
         final.update(
             {
                 "sql_query": state.get("sql_query") or None,
-                "python_code": state.get("python_code") or None,
+                "python_code": self._exposed_python_code(state),
                 "artifacts": artifacts,
                 "sources": source_refs,
                 "status_events": state.get("status_events", []),
@@ -520,7 +510,7 @@ class DataChatAgent:
 
     def route_after_plan(self, state: AgentState) -> str:
         tool = state.get("execution_plan", {}).get("tool", "sql")
-        if tool in {"question_suggestions", "metadata", "numeric_profile"}:
+        if tool in {"question_suggestions", "metadata"}:
             return "final"
         if tool == "python" or state.get("question_type") in {"requires_python", "requires_chart"}:
             return "python"
@@ -548,14 +538,14 @@ class DataChatAgent:
     def route_after_python_validation(self, state: AgentState) -> str:
         if state.get("python_validation", {}).get("is_valid"):
             return "execute"
-        if int(state.get("python_attempts", 0)) < 2:
+        if int(state.get("python_attempts", 0)) < 3:
             return "repair"
         return "final"
 
     def route_after_python_execution(self, state: AgentState) -> str:
         if state.get("python_result", {}).get("ok"):
             return "critique"
-        if int(state.get("python_attempts", 0)) < 2:
+        if int(state.get("python_attempts", 0)) < 3:
             return "repair"
         return "final"
 
@@ -649,20 +639,6 @@ class DataChatAgent:
         }
 
     @staticmethod
-    def _numeric_extrema_plan() -> dict[str, Any]:
-        return {
-            "tool": "numeric_profile",
-            "steps": [
-                "Inspect current metadata catalog",
-                "Find numeric measure columns across active tables",
-                "Execute a safe read-only aggregate query for minimum, maximum, and average values",
-                "Summarize the highest values with a table and chart",
-            ],
-            "requires_chart": True,
-            "clarification_question": None,
-        }
-
-    @staticmethod
     def _clarification_plan(state: AgentState) -> dict[str, Any]:
         classification = state.get("classification", {})
         question = classification.get("clarification_question") or classification.get("question")
@@ -720,55 +696,6 @@ class DataChatAgent:
             "what insights can",
         )
         return any(phrase in text for phrase in phrases)
-
-    def _is_numeric_extrema_request(self, state: AgentState) -> bool:
-        text = self._normalize_text(state.get("user_question", ""))
-        if not text or self._looks_like_metadata_lookup(text):
-            return False
-        tokens = set(text.split())
-        extrema_terms = {
-            "max",
-            "maximum",
-            "maximums",
-            "min",
-            "minimum",
-            "minimums",
-            "highest",
-            "lowest",
-            "largest",
-            "smallest",
-            "peak",
-            "peaks",
-            "extreme",
-            "extremes",
-        }
-        if not tokens & extrema_terms:
-            return False
-        generic_metric_terms = {
-            "value",
-            "values",
-            "number",
-            "numbers",
-            "numeric",
-            "measure",
-            "measures",
-        }
-        extrema_phrases = (
-            "max values",
-            "maximum values",
-            "maximum value",
-            "highest values",
-            "largest values",
-            "min values",
-            "minimum values",
-            "lowest values",
-            "smallest values",
-        )
-        return (
-            any(phrase in text for phrase in extrema_phrases)
-            or bool(tokens & generic_metric_terms)
-            or len(tokens) <= 8
-        )
 
     @classmethod
     def _looks_like_metadata_lookup(cls, question: str) -> bool:
@@ -1246,368 +1173,6 @@ class DataChatAgent:
             )
         return [row for row in cleaned if row["Question"]]
 
-    async def _build_numeric_extrema_response(self, state: AgentState) -> dict[str, Any]:
-        schema = await self.catalog.get_schema(state.get("selected_data_sources"))
-        specs = self._numeric_column_specs(schema, state.get("user_question", ""))
-        if not specs:
-            return {
-                "answer": (
-                    "I inspected the current catalog, but I could not find numeric measure "
-                    "columns suitable for maximum-value profiling."
-                ),
-                "reasoning_summary": (
-                    "Checked table metadata for numeric columns before deciding no safe "
-                    "aggregate query was useful."
-                ),
-                "caveats": ["Identifier columns are excluded from generic max/min profiling."],
-                "confidence": "medium",
-                "artifacts": [],
-                "sources": [],
-            }
-
-        add_event(
-            state,
-            "Generating query",
-            "completed",
-            "Built a deterministic aggregate query for numeric maxima.",
-        )
-        sql = self._numeric_extrema_sql(specs)
-        state["sql_query"] = sql
-        validation = self.sql_guard.validate(sql, state.get("table_columns", {}))
-        state["sql_validation"] = {
-            "is_valid": validation.is_valid,
-            "errors": validation.errors,
-            "warnings": validation.warnings,
-            "used_tables": validation.used_tables,
-            "used_columns": validation.used_columns,
-        }
-        if not validation.is_valid:
-            state["errors"].extend(validation.errors)
-            add_event(state, "Validating", "error", "Numeric aggregate SQL validation failed.")
-            return {
-                "answer": "I could not safely validate the numeric max/min query.",
-                "reasoning_summary": (
-                    "Generated a deterministic aggregate query but blocked execution."
-                ),
-                "caveats": validation.errors,
-                "confidence": "low",
-                "artifacts": [],
-                "sources": [],
-            }
-        add_event(state, "Validating", "completed", "Numeric aggregate SQL validation passed.")
-
-        add_event(state, "Executing", "running", "Computing numeric maxima across active tables.")
-        result = await self.query_engine.execute_sql(sql, state.get("selected_data_sources"))
-        rows = sorted(
-            result.rows,
-            key=lambda row: self._sortable_number(row.get("Maximum")),
-            reverse=True,
-        )
-        state["sql_result"] = {
-            "columns": result.columns,
-            "rows": rows,
-            "row_count": len(rows),
-            "truncated": result.truncated,
-            "duration_ms": result.duration_ms,
-            "metadata": result.metadata,
-        }
-        add_event(
-            state,
-            "Executing",
-            "completed",
-            f"Computed maxima for {len(rows)} numeric field(s).",
-            duration_ms=result.duration_ms,
-        )
-
-        critique_caveats = []
-        if not rows:
-            critique_caveats.append("No numeric aggregate rows were returned.")
-        add_event(
-            state,
-            "Critiquing answer",
-            "completed" if rows else "warning",
-            "Checked that the numeric profile answers the max/min request.",
-        )
-
-        top_rows = rows[:5]
-        answer_lines = [
-            "I interpreted this as: find the maximum values across numeric business fields.",
-            "",
-        ]
-        if top_rows:
-            best = top_rows[0]
-            best_label = self._max_row_phrase(best)
-            answer_lines.append(
-                "The largest maximum I found is "
-                f"{self._format_number(best.get('Maximum'))} for {best.get('Field')} "
-                f"in {best.get('Dataset')} / {best.get('Table')}{best_label}."
-            )
-            answer_lines.append("")
-            answer_lines.append("Top maximum values:")
-            for row in top_rows:
-                answer_lines.append(
-                    "- "
-                    f"{row.get('Dataset')} / {row.get('Table')} / {row.get('Field')}: "
-                    f"max {self._format_number(row.get('Maximum'))}"
-                    f"{self._max_row_phrase(row)} "
-                    f"(min {self._format_number(row.get('Minimum'))}, "
-                    f"avg {self._format_number(row.get('Average'))})"
-                )
-        answer_lines.append(
-            "\nThe table below includes the full numeric profile I computed. "
-            "Identifier fields such as IDs are excluded so the result focuses on business measures."
-        )
-
-        chart_rows = top_rows[:8]
-        artifacts: list[dict[str, Any]] = [
-            {
-                "type": "table",
-                "title": "Numeric Maxima",
-                "columns": result.columns,
-                "rows": rows[: self.settings.sql_preview_row_limit],
-                "truncated": len(rows) > self.settings.sql_preview_row_limit,
-            }
-        ]
-        if chart_rows:
-            artifacts.append(
-                {
-                    "type": "chart",
-                    "title": "Top Numeric Maximum Values",
-                    "spec": {
-                        "data": [
-                            {
-                                "type": "bar",
-                                "orientation": "h",
-                                "x": [row.get("Maximum") for row in reversed(chart_rows)],
-                                "y": [
-                                    f"{row.get('Dataset')} / {row.get('Field')}"
-                                    for row in reversed(chart_rows)
-                                ],
-                                "marker": {"color": "#0f766e"},
-                                "hovertemplate": "%{y}<br>%{x:,}<extra></extra>",
-                            }
-                        ],
-                        "layout": {
-                            "margin": {"l": 160, "r": 24, "t": 24, "b": 48},
-                            "xaxis": {"title": "Maximum value"},
-                            "yaxis": {"title": ""},
-                            "showlegend": False,
-                        },
-                    },
-                }
-            )
-
-        return {
-            "answer": "\n".join(answer_lines),
-            "reasoning_summary": (
-                "Inspected current metadata, generated a safe aggregate query, validated it, "
-                "and computed maximum, minimum, and average values for numeric measure columns."
-            ),
-            "caveats": [
-                "Generic max/min profiling excludes identifier-like columns such as *_id.",
-                "If source files changed recently, rescan before relying on these values.",
-                *critique_caveats,
-            ],
-            "confidence": "high",
-            "artifacts": artifacts,
-            "sources": [],
-        }
-
-    def _numeric_column_specs(self, schema: Any, question: str) -> list[dict[str, str]]:
-        source_by_id = {source.id: source for source in schema.data_sources}
-        specs: list[dict[str, str]] = []
-        for table in schema.tables:
-            source = source_by_id.get(table.data_source_id)
-            dataset_name = self._friendly_name(source.name if source else table.data_source_id)
-            for column in table.columns:
-                if not self._is_numeric_data_type(column.data_type):
-                    continue
-                if self._is_ignored_numeric_column(column.normalized_name):
-                    continue
-                specs.append(
-                    {
-                        "dataset": dataset_name,
-                        "table": table.original_name,
-                        "canonical_table": table.canonical_name,
-                        "column": column.normalized_name,
-                        "field": column.original_name,
-                        "label_column": self._label_column_for_table(table),
-                    }
-                )
-
-        focus_tokens = self._analysis_focus_tokens(question)
-        if not focus_tokens:
-            return specs
-
-        focused = [
-            spec
-            for spec in specs
-            if focus_tokens
-            & set(
-                self._normalize_text(
-                    f"{spec['dataset']} {spec['table']} {spec['field']} {spec['column']}"
-                ).split()
-            )
-        ]
-        return focused or specs
-
-    @staticmethod
-    def _numeric_extrema_sql(specs: list[dict[str, str]]) -> str:
-        statements = []
-        for spec in specs:
-            column = DataChatAgent._quote_identifier(spec["column"])
-            table = DataChatAgent._quote_identifier(spec["canonical_table"])
-            label_column = spec.get("label_column")
-            max_row_sql = (
-                "CAST(NULL AS VARCHAR)"
-                if not label_column
-                else (
-                    f"ARG_MAX(CAST({DataChatAgent._quote_identifier(label_column)} AS VARCHAR), "
-                    f"CAST({column} AS DOUBLE))"
-                )
-            )
-            statements.append(
-                "SELECT "
-                f"{DataChatAgent._quote_literal(spec['dataset'])} AS \"Dataset\", "
-                f"{DataChatAgent._quote_literal(spec['table'])} AS \"Table\", "
-                f"{DataChatAgent._quote_literal(spec['field'])} AS \"Field\", "
-                f"{max_row_sql} AS \"Max row\", "
-                f"COUNT({column}) AS \"Non-null rows\", "
-                f"MIN(CAST({column} AS DOUBLE)) AS \"Minimum\", "
-                f"MAX(CAST({column} AS DOUBLE)) AS \"Maximum\", "
-                f"AVG(CAST({column} AS DOUBLE)) AS \"Average\" "
-                f"FROM {table} WHERE {column} IS NOT NULL"
-            )
-        return "\nUNION ALL\n".join(statements)
-
-    @staticmethod
-    def _label_column_for_table(table: Any) -> str:
-        preferred = (
-            "metric",
-            "project_name",
-            "customer_name",
-            "sku",
-            "supplier",
-            "vendor",
-            "milestone_name",
-            "material_family",
-            "region",
-            "product_family",
-            "warehouse",
-            "cost_category",
-            "channel",
-        )
-        columns_by_name = {column.normalized_name: column for column in table.columns}
-        for name in preferred:
-            column = columns_by_name.get(name)
-            if column and not DataChatAgent._is_numeric_data_type(column.data_type):
-                return column.normalized_name
-        for column in table.columns:
-            if DataChatAgent._is_numeric_data_type(column.data_type):
-                continue
-            if DataChatAgent._is_identifier_like(column.normalized_name):
-                continue
-            return column.normalized_name
-        return ""
-
-    @staticmethod
-    def _analysis_focus_tokens(question: str) -> set[str]:
-        generic_tokens = {
-            "a",
-            "an",
-            "are",
-            "column",
-            "columns",
-            "do",
-            "find",
-            "for",
-            "give",
-            "highest",
-            "is",
-            "largest",
-            "max",
-            "maximum",
-            "maximums",
-            "me",
-            "measure",
-            "measures",
-            "metric",
-            "metrics",
-            "min",
-            "minimum",
-            "minimums",
-            "number",
-            "numbers",
-            "of",
-            "show",
-            "smallest",
-            "the",
-            "value",
-            "values",
-            "what",
-            "which",
-        }
-        return set(DataChatAgent._normalize_text(question).split()) - generic_tokens
-
-    @staticmethod
-    def _is_numeric_data_type(data_type: str) -> bool:
-        lowered = data_type.lower()
-        if any(blocked in lowered for blocked in ("bool", "date", "time")):
-            return False
-        return any(
-            term in lowered
-            for term in ("int", "float", "double", "decimal", "numeric", "number", "real")
-        )
-
-    @staticmethod
-    def _is_ignored_numeric_column(column_name: str) -> bool:
-        if column_name == "formula":
-            return True
-        return DataChatAgent._is_identifier_like(column_name)
-
-    @staticmethod
-    def _is_identifier_like(column_name: str) -> bool:
-        normalized = DataChatAgent._normalize_text(column_name)
-        return (
-            normalized == "id"
-            or normalized.endswith(" id")
-            or normalized in {"row number", "index"}
-        )
-
-    @staticmethod
-    def _quote_identifier(value: str) -> str:
-        return f'"{value.replace(chr(34), chr(34) + chr(34))}"'
-
-    @staticmethod
-    def _quote_literal(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
-
-    @staticmethod
-    def _sortable_number(value: Any) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return float("-inf")
-
-    @staticmethod
-    def _format_number(value: Any) -> str:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return "n/a"
-        if number.is_integer():
-            return f"{number:,.0f}"
-        if abs(number) >= 100:
-            return f"{number:,.2f}"
-        return f"{number:.4g}"
-
-    @staticmethod
-    def _max_row_phrase(row: dict[str, Any]) -> str:
-        label = row.get("Max row")
-        if label in (None, ""):
-            return ""
-        return f" ({label})"
-
     async def _build_metadata_response(self, state: AgentState) -> dict[str, Any]:
         schema = await self.catalog.get_schema(state.get("selected_data_sources"))
         source_by_id = {source.id: source for source in schema.data_sources}
@@ -1897,6 +1462,14 @@ class DataChatAgent:
         used_tables = validation.get("used_tables") or []
         used_columns = validation.get("used_columns") or {}
         return [{"table": table, "columns": used_columns.get(table, [])} for table in used_tables]
+
+    @staticmethod
+    def _exposed_python_code(state: AgentState) -> str | None:
+        if not state.get("python_code"):
+            return None
+        if state.get("python_result", {}).get("ok"):
+            return state.get("python_code")
+        return None
 
     async def _compose_final_with_fallback(self, state: AgentState) -> dict[str, Any]:
         python_answer = state.get("python_result", {}).get("answer")
