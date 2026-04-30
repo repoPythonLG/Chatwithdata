@@ -13,6 +13,8 @@ from app.agent.prompts import (
     CLASSIFIER_SYSTEM,
     CRITIC_SYSTEM,
     FINAL_SYSTEM,
+    METADATA_OVERVIEW_CRITIC_SYSTEM,
+    METADATA_OVERVIEW_SYSTEM,
     PLANNER_SYSTEM,
     PYTHON_SYSTEM,
     QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
@@ -899,9 +901,12 @@ class DataChatAgent:
         if not text:
             return False
         exact = {
+            "what kind of question can i ask",
+            "what kind of questions can i ask",
             "what can i ask",
             "what can i ask about",
             "what questions can i ask",
+            "what questions i can ask",
             "what should i ask",
             "suggest questions",
             "suggest some questions",
@@ -918,7 +923,12 @@ class DataChatAgent:
         if text in exact:
             return True
         phrases = (
+            "kind of question can i ask",
+            "kind of questions can i ask",
+            "questions i can ask",
             "questions can i ask",
+            "questions could i ask",
+            "questions should i ask",
             "can i ask about",
             "what analyses can",
             "what analysis can",
@@ -929,12 +939,18 @@ class DataChatAgent:
             "example prompts",
             "sample questions",
             "question ideas",
-            "questions should i ask",
             "what should i analyze",
             "what can you analyze",
             "what insights can",
         )
-        return any(phrase in text for phrase in phrases)
+        if any(phrase in text for phrase in phrases):
+            return True
+
+        tokens = set(text.split())
+        return bool(
+            {"question", "questions", "prompt", "prompts"} & tokens
+            and {"ask", "asking", "suggest", "suggested", "example", "examples"} & tokens
+        )
 
     @classmethod
     def _looks_like_metadata_lookup(cls, question: str) -> bool:
@@ -1352,7 +1368,7 @@ class DataChatAgent:
                         }
                         for column in table.columns
                     ],
-                    "sample_rows": table.sample_rows[:3],
+                    "sample_rows": table.sample_rows[:5],
                 }
             )
         display_names = {table.canonical_name: table.original_name for table in schema.tables}
@@ -1414,7 +1430,6 @@ class DataChatAgent:
 
     async def _build_metadata_response(self, state: AgentState) -> dict[str, Any]:
         schema = await self.catalog.get_schema(state.get("selected_data_sources"))
-        source_by_id = {source.id: source for source in schema.data_sources}
         tables = schema.tables
         table_count = len(tables)
         source_count = len(schema.data_sources)
@@ -1439,60 +1454,6 @@ class DataChatAgent:
                 "sources": [],
             }
 
-        relationship_lines = self._metadata_relationship_lines(
-            schema.relationships,
-            {table.canonical_name: table.original_name for table in tables},
-        )
-        row_phrase = (
-            f", covering about {total_rows:,} scanned rows"
-            if known_row_counts and len(known_row_counts) == table_count
-            else ""
-        )
-        source_label = "data source" if source_count == 1 else "data sources"
-        table_label = "table or sheet" if table_count == 1 else "tables or sheets"
-        answer_parts = [
-            "Here is the current data landscape.",
-            "",
-            f"I see {source_count} configured {source_label} with {table_count} "
-            f"queryable {table_label}{row_phrase}. The data currently covers:",
-            *self._metadata_business_summary_lines(schema.data_sources, tables),
-        ]
-        if relationship_lines:
-            answer_parts.extend(
-                [
-                    "",
-                    "Useful relationship paths are already visible:",
-                    *relationship_lines,
-                ]
-            )
-        answer_parts.append(
-            "\nI put the detailed catalog in the table below. Good next questions would be "
-            "'which SKUs are below reorder point?', 'compare revenue to targets by region', "
-            "or 'which projects are overspending?'."
-        )
-
-        artifact_rows = []
-        dataset_row_counts: dict[str, int] = {}
-        for table in tables:
-            source = source_by_id.get(table.data_source_id)
-            dataset_name = self._friendly_name(source.name if source else table.data_source_id)
-            columns = [column.normalized_name for column in table.columns]
-            if table.row_count is not None:
-                dataset_row_counts[dataset_name] = (
-                    dataset_row_counts.get(dataset_name, 0) + table.row_count
-                )
-            artifact_rows.append(
-                {
-                    "Dataset": dataset_name,
-                    "Table / sheet": table.original_name,
-                    "Rows": table.row_count,
-                    "What it contains": self._metadata_table_description(table),
-                    "Key fields": ", ".join(columns[:8]),
-                    "Sample row": self._compact_sample_row(table.sample_rows),
-                }
-            )
-
-        preview_limit = self.settings.sql_preview_row_limit
         caveats = []
         if len(known_row_counts) != table_count:
             caveats.append("Some tables do not have row counts in the current metadata scan.")
@@ -1500,167 +1461,140 @@ class DataChatAgent:
             caveats.append("One or more configured data sources are not active.")
         caveats.append("If files changed since the last scan, rescan before relying on row counts.")
 
-        artifacts: list[dict[str, Any]] = [
+        schema_payload = self._friendly_schema_payload(schema)
+        add_event(
+            state,
+            "Generating answer",
+            "running",
+            "Asking the LLM to summarize the current metadata catalog.",
+        )
+        overview_prompt = [
+            {"role": "system", "content": METADATA_OVERVIEW_SYSTEM},
             {
-                "type": "table",
-                "title": "Data Catalog",
-                "columns": [
-                    "Dataset",
-                    "Table / sheet",
-                    "Rows",
-                    "What it contains",
-                    "Key fields",
-                    "Sample row",
-                ],
-                "rows": artifact_rows[:preview_limit],
-                "truncated": len(artifact_rows) > preview_limit,
-            }
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_question": state.get("user_question"),
+                        "source_count": source_count,
+                        "table_count": table_count,
+                        "known_total_rows": (
+                            total_rows
+                            if known_row_counts and len(known_row_counts) == table_count
+                            else None
+                        ),
+                        "schema": schema_payload,
+                        "recent_messages": state.get("messages", [])[-6:],
+                    }
+                ),
+            },
         ]
-        if dataset_row_counts:
-            artifacts.append(
-                {
-                    "type": "chart",
-                    "title": "Rows by Dataset",
-                    "spec": {
-                        "data": [
-                            {
-                                "type": "bar",
-                                "x": list(dataset_row_counts.keys()),
-                                "y": list(dataset_row_counts.values()),
-                                "marker": {"color": "#0f766e"},
-                                "hovertemplate": "%{x}<br>%{y:,} rows<extra></extra>",
-                            }
-                        ],
-                        "layout": {
-                            "margin": {"l": 52, "r": 24, "t": 24, "b": 72},
-                            "xaxis": {"title": "Dataset"},
-                            "yaxis": {"title": "Rows"},
-                            "showlegend": False,
-                        },
-                    },
-                }
+        try:
+            generated = await self.llm.complete_json(overview_prompt, max_tokens=2200)
+        except Exception as exc:
+            add_event(
+                state,
+                "Generating answer",
+                "error",
+                "LLM metadata overview generation failed.",
+                error=str(exc),
             )
+            return {
+                "answer": (
+                    "I inspected the metadata catalog, but the model endpoint was unavailable "
+                    "before it could write a grounded overview."
+                ),
+                "reasoning_summary": (
+                    "Retrieved the current metadata catalog, but the LLM overview step failed."
+                ),
+                "caveats": [str(exc), *caveats],
+                "confidence": "low",
+                "artifacts": [],
+                "sources": [],
+            }
+
+        add_event(state, "Generating answer", "completed", "LLM metadata overview generated.")
+        generated_caveats = (
+            generated.get("caveats") if isinstance(generated.get("caveats"), list) else []
+        )
+        confidence = generated.get("confidence") if generated.get("confidence") in {
+            "low",
+            "medium",
+            "high",
+        } else "medium"
+
+        add_event(
+            state,
+            "Critiquing answer",
+            "running",
+            "Checking the metadata overview against the available schema.",
+        )
+        critique_prompt = [
+            {"role": "system", "content": METADATA_OVERVIEW_CRITIC_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_question": state.get("user_question"),
+                        "schema": schema_payload,
+                        "draft": generated,
+                    }
+                ),
+            },
+        ]
+        try:
+            critique = await self.llm.complete_json(critique_prompt, max_tokens=1800)
+        except Exception as exc:
+            critique = {
+                "passes": True,
+                "confidence": confidence,
+                "summary": f"Critique model was unavailable: {exc}",
+                "caveats": [f"Automated critique was unavailable: {exc}"],
+                "revised_answer": generated.get("answer"),
+            }
+
+        answer = str(critique.get("revised_answer") or generated.get("answer") or "").strip()
+        all_caveats = self._unique_strings(
+            [
+                *generated_caveats,
+                *self._string_list(critique.get("caveats")),
+                *caveats,
+            ]
+        )
+        confidence = critique.get("confidence") or confidence
+        if confidence not in {"low", "medium", "high"}:
+            confidence = "medium"
+        state["critique"] = {
+            "passes": self._json_bool(critique.get("passes"), default=True),
+            "confidence": confidence,
+            "caveats": all_caveats,
+            "summary": critique.get("summary", "Metadata overview reviewed."),
+            "needs_repair": False,
+            "repair_tool": None,
+        }
+        add_event(
+            state,
+            "Critiquing answer",
+            "completed" if state["critique"]["passes"] else "warning",
+            state["critique"]["summary"],
+        )
 
         return {
-            "answer": "\n".join(answer_parts),
+            "answer": answer
+            or "I inspected the metadata catalog but could not compose an overview.",
             "reasoning_summary": (
-                "Read the current metadata catalog and summarized the available sources, "
-                "tables, columns, samples, and relationships. No generated SQL or Python "
-                "was executed for this overview."
+                "Used the current metadata catalog as LLM context and critiqued the overview "
+                "against the available sources, tables, columns, samples, and relationships."
             ),
-            "caveats": caveats,
-            "confidence": "high",
-            "artifacts": artifacts,
+            "caveats": all_caveats,
+            "confidence": confidence,
+            "artifacts": [],
             "sources": [],
         }
-
-    @staticmethod
-    def _metadata_business_summary_lines(data_sources: list[Any], tables: list[Any]) -> list[str]:
-        lines: list[str] = []
-        for source in data_sources:
-            source_tables = [table for table in tables if table.data_source_id == source.id]
-            if not source_tables:
-                lines.append(
-                    f"- {DataChatAgent._friendly_name(source.name)}: no scanned tables yet."
-                )
-                continue
-            descriptions = [
-                DataChatAgent._metadata_table_description(table) for table in source_tables
-            ]
-            summary = DataChatAgent._combine_descriptions(descriptions)
-            table_names = ", ".join(table.original_name for table in source_tables[:5])
-            if len(source_tables) > 5:
-                table_names += f", plus {len(source_tables) - 5} more"
-            lines.append(
-                f"- {DataChatAgent._friendly_name(source.name)}: {summary} "
-                f"Tables/sheets: {table_names}."
-            )
-        return lines
-
-    @staticmethod
-    def _metadata_relationship_lines(
-        relationships: list[Any], table_display_names: dict[str, str]
-    ) -> list[str]:
-        lines = []
-        for relationship in relationships[:6]:
-            left_table = table_display_names.get(relationship.left_table, relationship.left_table)
-            right_table = table_display_names.get(
-                relationship.right_table, relationship.right_table
-            )
-            lines.append(
-                "- "
-                f"{left_table} links to {right_table} through "
-                f"{relationship.left_column} and {relationship.right_column} "
-                f"({relationship.confidence:.0%} confidence)."
-            )
-        if len(relationships) > 6:
-            lines.append(f"- {len(relationships) - 6} more inferred relationship(s)")
-        return lines
-
-    @staticmethod
-    def _metadata_table_description(table: Any) -> str:
-        column_text = " ".join(column.normalized_name for column in table.columns).lower()
-        name_text = table.original_name.lower()
-        combined = f"{name_text} {column_text}"
-        tokens = set(DataChatAgent._normalize_text(combined).split())
-        if tokens & {"quality", "inspection", "inspections", "defect", "defects"}:
-            return "Quality inspection outcomes, sample sizes, and defect rates."
-        if tokens & {"supplier", "suppliers", "lead", "contract"}:
-            return "Supplier coverage, countries, lead times, and contract status."
-        if tokens & {"milestone", "milestones", "planned", "actual"}:
-            return "Milestone schedules, completion dates, and delivery status."
-        if tokens & {"spend", "transaction", "transactions", "vendor", "amount"}:
-            return "Spend transactions, vendors, cost categories, dates, and amounts."
-        if tokens & {"project", "projects", "budget", "sponsor"}:
-            return "Project master data, budgets, sponsors, regions, and business units."
-        if tokens & {"target", "targets", "monthly", "month"}:
-            return "Monthly targets by period and business dimension."
-        if tokens & {"order", "orders", "revenue", "margin", "channel"}:
-            return "Orders, revenue, margins, product families, status, and channels."
-        if tokens & {"customer", "customers", "segment", "owner"}:
-            return "Customer master data, regions, segments, and account ownership."
-        if tokens & {"inventory", "warehouse", "reorder"}:
-            return "Inventory quantities, value, warehouses, and reorder signals."
-        if "summary" in combined or "metric" in combined:
-            return "Precalculated summary metrics from the source workbook."
-        return "Structured business records available for querying and analysis."
-
-    @staticmethod
-    def _combine_descriptions(descriptions: list[str]) -> str:
-        unique = []
-        for description in descriptions:
-            short = description.rstrip(".")
-            if short not in unique:
-                unique.append(short)
-        if not unique:
-            return "Structured business records."
-        if len(unique) == 1:
-            return f"{unique[0]}."
-        return "; ".join(unique[:4]) + "."
 
     @staticmethod
     def _friendly_name(value: str) -> str:
         cleaned = value.removeprefix("example_").replace("_", " ").strip()
         return cleaned.title() if cleaned else value
-
-    @staticmethod
-    def _compact_sample_row(sample_rows: list[dict[str, Any]]) -> str:
-        if not sample_rows:
-            return ""
-        row = sample_rows[0]
-        parts = []
-        for key, value in list(row.items())[:5]:
-            parts.append(f"{key}={DataChatAgent._compact_value(value)}")
-        if len(row) > 5:
-            parts.append("...")
-        return "; ".join(parts)
-
-    @staticmethod
-    def _compact_value(value: Any) -> str:
-        if value is None:
-            return "null"
-        rendered = json.dumps(value, default=str) if isinstance(value, (dict, list)) else str(value)
-        return rendered if len(rendered) <= 80 else f"{rendered[:77]}..."
 
     def _build_artifacts(self, state: AgentState) -> list[dict[str, Any]]:
         artifacts: list[dict[str, Any]] = []

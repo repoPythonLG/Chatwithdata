@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { DatabaseZap, MessageSquareText, Moon, Settings, Sun } from "lucide-react";
+import { MessageSquareText, Moon, Settings, Sun } from "lucide-react";
 
 import { ChatPage } from "./pages/ChatPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useAppStore } from "./store/appStore";
+
+const SABIC_LOGO_URL = "https://www.sabic.com/en/Images/SABIC-LOGO_tcm1010-14323.svg";
 
 export default function App() {
   const activePage = useAppStore((state) => state.activePage);
@@ -20,15 +22,12 @@ export default function App() {
     <div className="min-h-screen p-4 text-ink-900 dark:text-ink-50">
       <div className="mx-auto flex max-w-[1800px] flex-col gap-4">
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-white/60 bg-white/58 px-5 py-4 shadow-soft backdrop-blur-xl dark:border-white/10 dark:bg-ink-900/62">
-          <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-2xl bg-ink-900 text-white dark:bg-harbor-500">
-              <DatabaseZap className="h-5 w-5" />
+          <div className="flex items-center gap-4">
+            <div className="grid h-12 w-[7.5rem] place-items-center rounded-2xl bg-white/80 px-3 shadow-inner dark:bg-white">
+              <img className="h-9 w-auto" src={SABIC_LOGO_URL} alt="SABIC logo" />
             </div>
             <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-ink-500 dark:text-ink-100">
-                Corporate
-              </p>
-              <h1 className="font-display text-xl font-bold">Data Chat</h1>
+              <h1 className="font-display text-xl font-bold">Chat with Data</h1>
             </div>
           </div>
 

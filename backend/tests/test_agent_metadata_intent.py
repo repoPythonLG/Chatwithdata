@@ -11,6 +11,12 @@ def test_broad_data_questions_are_metadata_lookup() -> None:
 
 def test_question_suggestion_requests_are_separate_from_metadata_overview() -> None:
     assert DataChatAgent._is_question_suggestion_request("What questions can I ask?")
+    assert DataChatAgent._is_question_suggestion_request(
+        "what kind of questions I can ask about the data"
+    )
+    assert DataChatAgent._is_question_suggestion_request(
+        "what questions I can ask about these files"
+    )
     assert DataChatAgent._is_question_suggestion_request("Give me example prompts")
     assert not DataChatAgent._looks_like_metadata_lookup("What can I ask about?")
 
