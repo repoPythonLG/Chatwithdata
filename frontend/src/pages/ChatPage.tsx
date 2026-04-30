@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Database, Loader2 } from "lucide-react";
 
@@ -16,6 +16,8 @@ import type { ChatResponse, Conversation, StatusEvent } from "../types/api";
 
 export function ChatPage() {
   const queryClient = useQueryClient();
+  const messagesViewportRef = useRef<HTMLDivElement | null>(null);
+  const shouldFollowOutputRef = useRef(true);
   const datasources = useQuery({ queryKey: ["datasources"], queryFn: api.datasources });
   const selectedDataSources = useAppStore((state) => state.selectedDataSources);
   const toggleDataSource = useAppStore((state) => state.toggleDataSource);
@@ -29,6 +31,22 @@ export function ChatPage() {
     () => datasources.data?.filter((source) => source.status === "active") ?? [],
     [datasources.data]
   );
+
+  useEffect(() => {
+    if (!shouldFollowOutputRef.current) return;
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+
+    requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+  }, [messages, events.length, isStreaming]);
+
+  function handleMessagesScroll() {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    shouldFollowOutputRef.current = isNearBottom(viewport);
+  }
 
   async function submit(event?: { preventDefault: () => void }) {
     event?.preventDefault();
@@ -49,6 +67,7 @@ export function ChatPage() {
     setInput("");
     setEvents([]);
     setIsStreaming(true);
+    shouldFollowOutputRef.current = true;
 
     try {
       await streamChat(
@@ -102,12 +121,14 @@ export function ChatPage() {
     setConversationId(null);
     setMessages([]);
     setEvents([]);
+    shouldFollowOutputRef.current = true;
   }
 
   function loadConversation(conversation: Conversation, loadedMessages: UiMessage[]) {
     setConversationId(conversation.id);
     setMessages(loadedMessages);
     setEvents([]);
+    shouldFollowOutputRef.current = true;
   }
 
   return (
@@ -167,7 +188,11 @@ export function ChatPage() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-auto p-5">
+        <div
+          className="min-h-0 flex-1 space-y-5 overflow-auto p-5"
+          onScroll={handleMessagesScroll}
+          ref={messagesViewportRef}
+        >
           {!messages.length ? (
             <EmptyState onExample={setInput} />
           ) : (
@@ -229,6 +254,10 @@ export function ChatPage() {
       </main>
     </div>
   );
+}
+
+function isNearBottom(element: HTMLElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight < 96;
 }
 
 function EmptyState({ onExample }: { onExample: (value: string) => void }) {
