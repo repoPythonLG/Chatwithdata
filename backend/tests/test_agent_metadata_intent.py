@@ -35,3 +35,18 @@ def test_known_table_overview_is_metadata_without_capturing_analytics() -> None:
     assert not DataChatAgent._looks_like_table_overview(
         "show revenue by customer", table_columns
     )
+
+
+def test_generic_extrema_questions_are_executable_profile_requests() -> None:
+    agent = object.__new__(DataChatAgent)
+
+    assert agent._is_numeric_extrema_request({"user_question": "what are the maximum values?"})
+    assert agent._is_numeric_extrema_request({"user_question": "max revenue"})
+
+
+def test_identifier_columns_are_excluded_from_generic_numeric_profiles() -> None:
+    assert DataChatAgent._is_numeric_data_type("Int64")
+    assert DataChatAgent._is_numeric_data_type("Float64")
+    assert not DataChatAgent._is_numeric_data_type("datetime64[us]")
+    assert DataChatAgent._is_ignored_numeric_column("project_id")
+    assert not DataChatAgent._is_ignored_numeric_column("reorder_point")
