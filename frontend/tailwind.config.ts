@@ -6,31 +6,31 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["Aptos", "Segoe UI Variable", "Helvetica Neue", "sans-serif"],
-        display: ["Aptos Display", "Segoe UI Variable Display", "Helvetica Neue", "sans-serif"],
-        mono: ["JetBrains Mono", "Cascadia Code", "SFMono-Regular", "monospace"]
+        sans: ["Sabic", "SabicRegular", "Arial", "sans-serif"],
+        display: ["SabicHeadline", "SabicHeadlineRegular", "Sabic", "Arial", "sans-serif"],
+        mono: ["Cascadia Code", "SFMono-Regular", "Consolas", "monospace"]
       },
       colors: {
         ink: {
-          50: "#f6f8f9",
-          100: "#e8edf0",
-          500: "#5d6f78",
-          700: "#31424a",
-          900: "#14252d"
+          50: "#f6f6f6",
+          100: "#e6e6e6",
+          500: "#939598",
+          700: "#4d4d4d",
+          900: "#041e42"
         },
         harbor: {
-          400: "#16a3b8",
-          500: "#0f8fa3",
-          700: "#0b6574"
+          400: "#46b4e6",
+          500: "#009fdf",
+          700: "#008cc8"
         },
         brass: {
-          300: "#f2ca72",
-          500: "#c9912f",
-          700: "#8c5f1d"
+          300: "#ffe678",
+          500: "#ffcd00",
+          700: "#f99d1c"
         }
       },
       boxShadow: {
-        soft: "0 20px 60px rgba(20, 37, 45, 0.12)"
+        soft: "0 20px 60px rgba(4, 30, 66, 0.14)"
       }
     }
   },

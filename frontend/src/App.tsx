@@ -6,7 +6,7 @@ import { ChatPage } from "./pages/ChatPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useAppStore } from "./store/appStore";
 
-const SABIC_LOGO_URL = "https://www.sabic.com/en/Images/SABIC-LOGO_tcm1010-14323.svg";
+const SABIC_LOGO_URL = "/brand/sabic-logo.svg";
 
 export default function App() {
   const activePage = useAppStore((state) => state.activePage);
@@ -23,11 +23,11 @@ export default function App() {
       <div className="mx-auto flex max-w-[1800px] flex-col gap-4">
         <header className="flex flex-wrap items-center justify-between gap-4 rounded-[2rem] border border-white/60 bg-white/58 px-5 py-4 shadow-soft backdrop-blur-xl dark:border-white/10 dark:bg-ink-900/62">
           <div className="flex items-center gap-4">
-            <div className="grid h-12 w-[7.5rem] place-items-center rounded-2xl bg-white/80 px-3 shadow-inner dark:bg-white">
+            <div className="grid h-12 w-[7.5rem] place-items-center rounded-2xl border border-ink-100 bg-white px-3 shadow-inner dark:border-white/20">
               <img className="h-9 w-auto" src={SABIC_LOGO_URL} alt="SABIC logo" />
             </div>
             <div>
-              <h1 className="font-display text-xl font-bold">Chat with Data</h1>
+              <h1 className="font-display text-xl text-ink-900 dark:text-white">Chat with Data</h1>
             </div>
           </div>
 
@@ -70,7 +70,7 @@ function NavButton({
       className={[
         "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
         active
-          ? "bg-ink-900 text-white dark:bg-harbor-500"
+          ? "bg-harbor-500 text-white shadow-lg shadow-harbor-500/20 hover:bg-harbor-700 dark:bg-harbor-400 dark:text-ink-900"
           : "text-ink-700 hover:bg-white dark:text-ink-50 dark:hover:bg-white/10"
       ].join(" ")}
       onClick={onClick}
