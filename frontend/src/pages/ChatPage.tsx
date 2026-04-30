@@ -20,6 +20,7 @@ export function ChatPage() {
   const shouldFollowOutputRef = useRef(true);
   const datasources = useQuery({ queryKey: ["datasources"], queryFn: api.datasources });
   const selectedDataSources = useAppStore((state) => state.selectedDataSources);
+  const setSelectedDataSources = useAppStore((state) => state.setSelectedDataSources);
   const toggleDataSource = useAppStore((state) => state.toggleDataSource);
   const conversationId = useAppStore((state) => state.conversationId);
   const setConversationId = useAppStore((state) => state.setConversationId);
@@ -31,6 +32,17 @@ export function ChatPage() {
     () => datasources.data?.filter((source) => source.status === "active") ?? [],
     [datasources.data]
   );
+  const activeSourceIds = useMemo(() => new Set(activeSources.map((source) => source.id)), [activeSources]);
+  const effectiveSelectedDataSources = useMemo(
+    () => selectedDataSources.filter((id) => activeSourceIds.has(id)),
+    [activeSourceIds, selectedDataSources]
+  );
+
+  useEffect(() => {
+    if (!datasources.data) return;
+    if (effectiveSelectedDataSources.length === selectedDataSources.length) return;
+    setSelectedDataSources(effectiveSelectedDataSources);
+  }, [datasources.data, effectiveSelectedDataSources, selectedDataSources, setSelectedDataSources]);
 
   useEffect(() => {
     if (!shouldFollowOutputRef.current) return;
@@ -74,7 +86,9 @@ export function ChatPage() {
         {
           message: question,
           conversation_id: conversationId,
-          selected_data_sources: selectedDataSources.length ? selectedDataSources : undefined
+          selected_data_sources: effectiveSelectedDataSources.length
+            ? effectiveSelectedDataSources
+            : undefined
         },
         {
           onConversation: setConversationId,
@@ -148,7 +162,8 @@ export function ChatPage() {
           <div className="space-y-2">
             {activeSources.map((source) => {
               const selected =
-                selectedDataSources.length === 0 || selectedDataSources.includes(source.id);
+                effectiveSelectedDataSources.length === 0 ||
+                effectiveSelectedDataSources.includes(source.id);
               return (
                 <button
                   className={[

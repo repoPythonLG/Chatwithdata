@@ -3,6 +3,7 @@
 .venv/
 backend/.venv/
 frontend/node_modules/
+tmp/qa/node_modules
 frontend/dist/
 __pycache__/
 *.pyc

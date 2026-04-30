@@ -14,6 +14,7 @@ from app.datasources.csv_scanner import CSV_EXTENSIONS, CSVScanner
 from app.datasources.excel_scanner import EXCEL_EXTENSIONS, ExcelScanner
 from app.datasources.relationships import infer_relationships
 from app.datasources.sqlite_scanner import SQLiteScanner
+from app.datasources.table_aliases import unique_table_aliases
 from app.db.models import (
     ColumnMetadata,
     DataSource,
@@ -199,6 +200,14 @@ class DataSourceCatalog:
     async def compact_schema_text(self, selected_source_ids: list[str] | None = None) -> str:
         schema = await self.get_schema(selected_source_ids)
         lines: list[str] = []
+        sources_by_id = {source.id: source for source in schema.data_sources}
+        alias_map = unique_table_aliases(
+            [
+                (table, sources_by_id[table.data_source_id])
+                for table in schema.tables
+                if table.data_source_id in sources_by_id
+            ]
+        )
         for source in schema.data_sources:
             lines.append(f"Source {source.name} ({source.source_type}, id={source.id})")
             source_tables = [table for table in schema.tables if table.data_source_id == source.id]
@@ -206,8 +215,11 @@ class DataSourceCatalog:
                 columns = ", ".join(
                     f"{col.normalized_name}:{col.data_type}" for col in table.columns
                 )
+                aliases = alias_map.get(table.canonical_name, [])
+                alias_text = f", aliases={aliases}" if aliases else ""
                 lines.append(
-                    f"- {table.canonical_name} [{table.kind}, rows={table.row_count}]: {columns}"
+                    f"- {table.canonical_name} [{table.kind}, rows={table.row_count}{alias_text}]: "
+                    f"{columns}"
                 )
                 if table.sample_rows:
                     lines.append(
@@ -227,17 +239,23 @@ class DataSourceCatalog:
         self, selected_source_ids: list[str] | None = None
     ) -> dict[str, set[str]]:
         tables = await self._load_tables(selected_source_ids)
-        return {
+        base_map = {
             table.canonical_name: {column.normalized_name for column in table.columns}
             for table in tables
         }
+        alias_map = unique_table_aliases([(table, table.data_source) for table in tables])
+        for table in tables:
+            columns = base_map[table.canonical_name]
+            for alias in alias_map.get(table.canonical_name, []):
+                base_map[alias] = columns
+        return base_map
 
     async def _load_tables(
         self, selected_source_ids: list[str] | None = None
     ) -> list[TableMetadata]:
         query = (
             select(TableMetadata)
-            .options(selectinload(TableMetadata.columns))
+            .options(selectinload(TableMetadata.columns), selectinload(TableMetadata.data_source))
             .order_by(TableMetadata.canonical_name)
         )
         if selected_source_ids:

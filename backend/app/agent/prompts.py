@@ -11,9 +11,31 @@ Allowed question_type values:
 
 Classify requests asking what the user can ask, suggested questions, example prompts,
 recommended analyses, or analysis ideas as question_suggestions.
+Classify requests asking for insights, executive insights, key findings, takeaways, or
+business observations as sql_answerable when data tables are available; the workflow
+should compute evidence first instead of asking the user to choose an insight type.
 Classify standard tabular analysis as sql_answerable, including counts, sums,
 averages/means, minimums, maximums, numeric column summaries, filtering, grouping,
 ranking, and joins. Do not classify these as requires_python.
+Classify distinct counts, unique counts, duplicate checks, overlap counts, and missing
+value counts as sql_answerable.
+Classify row-level comparisons across related tables as sql_answerable, including
+same/different values, overlaps, intersections, exclusions, and grouped overlap rates.
+Classify data-quality summaries, quality checks, completeness checks, consistency
+checks, null/missing summaries, duplicate summaries, and join-quality summaries as
+sql_answerable when tables are available.
+Classify missing-value lookups such as "which plants have missing values" as
+sql_answerable. The answer should execute a query instead of stopping at metadata.
+Classify questions like "which/list/show distinct values appear in this table" as
+sql_answerable. The answer should execute SELECT DISTINCT or GROUP BY rather than use
+sample rows.
+Classify trend requests as sql_answerable. If no metric is specified, use row count or
+PO item count over the requested time grain.
+Classify trend requests with explicit category names as sql_answerable even when the
+category value is not visible in compact schema samples; the SQL can test whether it
+exists in the data.
+Classify earliest/latest/minimum/maximum requests over table columns as sql_answerable,
+even when sample values are visible in metadata.
 Never classify averages by category, longest/highest open item, counts by status,
 or similar spreadsheet/CSV summaries as requires_python; those are sql_answerable.
 If the user asks for a comparison, chart-ready answer, or chart over ordinary grouped
@@ -66,6 +88,27 @@ Prefer SQL for lookups, filtering, grouping, joins, rankings, counts, sums,
 averages, minimums, maximums, and other standard tabular analysis. Use Python only
 for analyses that SQL cannot reasonably express, such as statistical modeling,
 multi-step custom algorithms, or advanced chart construction.
+Use SQL for distinct counts, unique counts, duplicate checks, overlap counts, missing
+value counts, and any question that asks "how many" records/entities/items exist.
+Use SQL for row-level comparisons across related tables, including same/different
+values, overlaps, intersections, exclusions, and grouped overlap rates. When the
+schema has obvious shared business keys, let the SQL use those keys and state the
+assumption in the final answer rather than asking the user to define "overlap".
+Use SQL for missing-value lookups and trend requests. If the trend metric is not
+specified, default to row count or PO item count for the relevant table(s).
+When the user provides an explicit category, label, code, plant, company, or similar
+filter value, use it as a SQL filter against the most relevant column even if that
+exact value is not visible in compact samples. Do not ask for clarification solely
+because samples omit the requested value.
+Use SQL for "which values appear", "list values", and "distinct values" requests.
+Use SQL for earliest/latest/minimum/maximum/date-range questions over actual data.
+Use SQL for broad "insights", "executive insights", "key findings", or "takeaways"
+requests. Generate compact evidence tables with relevant counts, distributions,
+trends, overlaps, missing values, or rankings based on available columns, then let the
+final answer explain the most useful findings and assumptions.
+Use SQL for data-quality summaries and quality checks. Produce evidence such as row
+counts, missing values, duplicate key counts, inconsistent mappings, date ranges,
+join overlap, and mismatch counts where supported by the schema.
 Excel and CSV sheets are already exposed as SQL tables. Do not choose Python merely
 because the data came from an Excel or CSV file.
 If classification says requires_python but the request is a standard tabular lookup,
@@ -90,9 +133,41 @@ example prompts, or asks for recommended analyses. Use metadata for broad explor
 questions about available data, tables, columns, schema, samples, or data sources.
 Use metadata only for catalog/schema/overview answers; do not use metadata to answer
 questions that should retrieve rows or distinct values from a business table.
-Do not ask for clarification when the metadata catalog can provide a useful overview.
+Do not ask for clarification when the metadata catalog can provide a useful overview,
+or when a common analysis meaning is available from related tables. For example,
+"overlap between two tables" should normally mean shared business keys/records, and
+"highest overlap by plant/company" should be computed by grouping those shared records.
+For "percentage overlap" where multiple denominators are possible, do not clarify;
+return overlap_count plus percentages against each table's grouped total and state
+that convention in the final answer.
 schema_interpretation contains the LLM's schema-grounded reading of ambiguous
 wording when an ambiguity-resolution pass was needed.
+"""
+
+PLAN_AUDIT_SYSTEM = """You audit a proposed execution plan for a corporate data-chat
+agent. Return JSON only:
+{
+  "passes": boolean,
+  "tool": "question_suggestions" | "metadata" | "sql" | "python" | "clarify" | "none",
+  "reasoning_summary": "brief safe summary"
+}
+Use metadata only for schema/catalog/overview questions. If the user asks for actual
+row values, distinct/unique counts, missing values, duplicates, earliest/latest dates,
+min/max, trends, rankings, joins, overlaps, comparisons, aggregates, insights, key
+findings, takeaways, data-quality checks, completeness checks, consistency checks,
+or "how many" records/entities/items exist, the tool should be sql unless Python is
+truly required.
+Do not ask for clarification when a sensible default metric exists, such as counting
+rows or PO items for trend questions. Do not ask for clarification for "overlap",
+"same", or "different" comparisons when the schema shows related tables with shared
+keys; choose sql and let the final answer state the join-key assumption. Do not reveal
+hidden chain-of-thought.
+For percentage overlap, do not ask which denominator to use; choose sql and return
+both overlap percentage against table 1's grouped total and against table 2's grouped
+total when both tables are involved.
+Do not ask for clarification solely because an explicit filter value is not present in
+the compact sample rows; if a relevant column exists, choose sql and let execution
+confirm whether matching rows exist.
 """
 
 AMBIGUITY_RESOLVER_SYSTEM = """You resolve ambiguous or typo-heavy user wording against
@@ -112,6 +187,8 @@ question is answerable from the schema, choose sql_answerable, requires_python,
 requires_chart, metadata_lookup, or question_suggestions instead of ambiguous.
 Prefer sql_answerable for simple lookups, distinct values, filters, grouping,
 ranking, totals, averages, minimums, maximums, joins, and tabular summaries.
+Prefer sql_answerable for "overlap", "same", or "different" questions across tables
+when shared key columns are visible in the schema.
 Only return ambiguous when multiple materially different interpretations remain
 and choosing one would risk a wrong answer. Do not invent tables or columns.
 Do not reveal hidden chain-of-thought.
@@ -223,14 +300,35 @@ Rules:
   ambiguous or typo-heavy wording.
 - Use canonical table and column names exactly.
 - Quote canonical table names and column names with double quotes.
+- Use single quotes for human-readable labels or source/table names returned as data
+  values, for example 'po_with_cost_center' AS table_name. Do not double-quote labels
+  unless they are actual schema identifiers.
 - Use SELECT/WITH only. No DDL, DML, PRAGMA, ATTACH, COPY, LOAD, INSTALL, file or network functions.
 - Avoid SELECT * except tiny previews.
 - Add sensible LIMITs for detail listings.
 - Prefer explicit joins and aliases.
+- Avoid CTE names or aliases that can be SQL keywords or functions, such as overlap,
+  overlaps, order, group, table, count, date, year, month, or values. Use descriptive
+  names like overlap_counts or grouped_metrics instead.
+- Do not add artificial sentinel rows such as "NO MATCHES", "NO DATA", or
+  "[NO AMBIGUOUS MAPPINGS FOUND]" to SQL results. A legitimate empty result set is
+  acceptable and should be explained in the final answer.
 - Do not add filters for status, dates, regions, categories, or other values unless the
   user requested them or the filter is required by the wording. For example, "average
   resolution hours by priority" includes all tickets; "open ticket with the longest
   resolution time" filters only the longest-ticket subquery to status='Open'.
+- For trend requests with no explicit metric, count rows or PO item records over the
+  requested date grain. Do not ask for clarification just to choose the metric.
+- If the user supplies an explicit category/filter value, include it in WHERE against
+  the most relevant text/code column even when sample rows do not show that exact value.
+  If no rows match, the empty result is still a valid answer.
+- For integer dates stored as YYYYMMDD, use DuckDB STRPTIME(CAST(column AS VARCHAR), '%Y%m%d')
+  before DATE_TRUNC, EXTRACT, or month/year filtering. Use DuckDB syntax
+  EXTRACT(YEAR FROM date_expr) and EXTRACT(MONTH FROM date_expr), not
+  EXTRACT('year' FROM date_expr).
+- For ordered UNION ALL results, prefer wrapping the UNION in an outer SELECT before
+  ORDER BY when ordering by aliases such as table_name, month, or row_count.
+- For missing-value questions, query for NULLs and blank strings where applicable.
 - Do not deduct returns/refunds, exclude holds, or apply operational quality filters
   unless the user explicitly asks for those business rules.
 - For month/date alignment in DuckDB, prefer DATE_TRUNC('month', CAST(column AS DATE))
@@ -239,6 +337,24 @@ Rules:
 - For target-vs-actual comparisons, join actuals to targets on the requested grain
   (for example month and region). Prefer INNER or LEFT joins for matched comparisons;
   use FULL JOIN only if the user explicitly asks to show unmatched actuals/targets.
+- For overlap/intersection questions between two related tables, default the overlap
+  unit to the strongest shared business key visible in both schemas, such as
+  (po_number, po_item) for purchasing tables. For "by plant", "by company code", or
+  similar grouped overlap, compute grouped counts from rows sharing that key and group
+  by the requested dimension. Use INNER JOIN for overlap, LEFT ANTI/NOT EXISTS for
+  only-in-one-table, and include the overlap count/percentage metric in the output.
+- For percentage overlap between two tables, return overlap_count, the grouped total
+  from each table, overlap_pct_of_first_table, and overlap_pct_of_second_table. Do not
+  ask the user to choose a denominator first.
+- For purchasing-style questions about "items per PO", "POs with more than N items",
+  or "line items", count distinct po_item values per po_number when po_item exists.
+  Include the item_count metric in the SELECT output.
+- For "same" or "different" value comparisons across two related tables, join on the
+  strongest shared business key and compare the requested columns with NULL-safe logic
+  using IS DISTINCT FROM or IS NOT DISTINCT FROM.
+- When producing grouped counts by table/source across multiple tables, aggregate each
+  table in its own SELECT and combine the aggregate rows with UNION ALL. Do not rely on
+  grouping an outer UNION subquery by a derived source-table alias.
 - For follow-ups using "those", "that", "the previous result", or similar wording,
   preserve the prior result scope from recent_messages and add only the new user-stated
   filter, sort, or output request. Do not introduce additional quality/status/disposition
@@ -265,10 +381,32 @@ Rules:
   "numeric summaries", generate one read-only SQL query that returns a tidy result
   table with dataset/table/column labels and aggregate values. Use UNION ALL or CTEs
   where appropriate.
+- For broad insight or executive-summary requests, generate one read-only SQL query
+  that returns a compact evidence table of metrics grounded in the available schema
+  (for example row counts, distinct business keys, missing values, top categories,
+  date ranges, overlaps, or mismatch counts). The final answer should synthesize
+  insights from that evidence; do not ask the user to choose an insight category first.
+- For data-quality summary requests, generate one read-only SQL query that returns a
+  compact evidence table of checks. Prefer metrics such as row counts, null/blank
+  counts, duplicate business-key counts, inconsistent code/text mappings, date ranges,
+  overlap counts, and mismatch counts when supported by available columns.
+  Keep the SQL simple and auditable: return columns like table_name, check_name,
+  column_name, metric_value, and notes using UNION ALL branches. Avoid UNNEST, arrays,
+  synthetic placeholder functions, or forced wide tables with mismatched columns.
+  Mandatory for data-quality summaries: use long-format metric rows only. Do not build
+  per-table wide-stat CTEs and then SELECT * UNION them. Every UNION branch must return
+  the exact same columns: table_name, check_name, column_name, metric_value, notes.
+  Do not return empty SQL for a data-quality summary when tables exist. If unsure,
+  produce a minimal evidence query with row_count, missing key-column counts, duplicate
+  (po_number, po_item) counts when those columns exist, and date min/max checks when a
+  date column exists.
 - Exclude identifier-like numeric columns (for example id, *_id, transaction_id,
   order_id, inspection_id) from generic numeric summaries unless the user explicitly
   asks for identifiers.
 - If the question cannot be answered, return empty SQL and a concise reason.
+- Exception: do not return empty SQL for broad data-quality, insight, summary,
+  count, trend, or overlap requests when at least one relevant table exists. Generate
+  the best compact evidence query and let the final answer state assumptions.
 - When repair_feedback is provided, treat the prior SQL as failed. Use the error,
   critique, and result preview to generate a corrected query instead of repeating it.
 - Follow plan.analysis_contract when present. Do not add filters beyond its
@@ -292,14 +430,37 @@ Rules:
 - Reject double-escaped identifiers, malformed quoting, wrong table aliases, unsupported
   filters, missing ORDER BY for highest/lowest/top/bottom questions, and SQL that would
   return a schema/catalog answer instead of executing the user's requested analysis.
+- Reject SELECT projections that use double-quoted table names as if they were string
+  labels, for example "some_table" AS table_name. corrected_sql should use
+  'some_table' AS table_name.
+- Reject CTE names or aliases that are likely SQL keywords/functions, especially
+  overlap/overlaps for overlap calculations; corrected_sql should rename them.
+- Reject SQL that UNIONs artificial sentinel/no-result rows into analytical outputs.
+  Empty result sets are valid and should not be padded with fake records.
 - Reject SQL that adds status/date/category/value filters that the user did not request,
   unless that filter applies only to a separately requested sub-result.
+- Do not reject an explicit user-requested category/code/text filter merely because
+  the compact samples do not show that exact value; execution should determine whether
+  rows match.
 - Reject SQL that deducts returns/refunds, excludes holds, or applies quality/status
   business rules not requested by the user.
 - Reject target-vs-actual SQL that uses FULL JOIN when the user asked for a matched
   comparison and did not ask to include unmatched rows.
+- Reject overlap SQL that fails to join on the strongest shared business key visible
+  in both schemas, such as both po_number and po_item for purchasing line-item tables.
+  For grouped overlap, reject SQL that counts rows after a many-to-many join without
+  deduplicating the overlap key.
+- Reject same/different comparison SQL that does not use NULL-safe comparison logic
+  such as IS DISTINCT FROM or IS NOT DISTINCT FROM.
+- Reject purchasing-style "items per PO" SQL that uses COUNT(*) instead of
+  COUNT(DISTINCT po_item) when po_item exists, or omits the item_count metric from
+  the SELECT output.
 - Reject DuckDB date parsing that uses DATE_PARSE or strftime when simple
   CAST(column AS DATE) with DATE_TRUNC is sufficient for the schema.
+- Reject DuckDB EXTRACT syntax that quotes the date part, such as
+  EXTRACT('year' FROM ...). corrected_sql should use EXTRACT(YEAR FROM ...).
+- Reject grouped count SQL that unions raw rows from multiple tables and then groups by
+  a derived source-table label. Prefer one grouped SELECT per table combined with UNION ALL.
 - When plan.analysis_contract is present, compare SQL against it. Reject SQL that applies
   a subquestion-specific filter to the wrong subquestion, omits requested outputs, or
   violates forbidden_assumptions.
@@ -317,6 +478,12 @@ Rules:
   relevant line-item schema includes discount_pct but the SQL does not reference it.
 - Reject UNION output that forces different meanings into the same column and loses
   required identifiers or metrics. A corrected SQL can use explicit columns with NULLs.
+- Reject data-quality summary SQL that uses UNNEST/arrays or placeholder expressions
+  such as ZERO() to force a wide table. Prefer explicit UNION ALL metric rows with
+  table_name, check_name, column_name, metric_value, and notes.
+- Reject data-quality summary SQL that builds per-table wide-stat CTEs and then
+  SELECT * UNIONs them. corrected_sql must use long-format metric rows with identical
+  columns in every UNION branch.
 - Reject SQL that omits user-requested output fields from the result table.
 - corrected_sql must still be read-only SELECT/WITH DuckDB SQL using canonical names.
 - If the SQL is safe and appropriate, set passes=true and corrected_sql="".
@@ -346,6 +513,11 @@ Mandatory checks:
   product code.
 - If the user asks for highest/lowest/top/bottom/ranking, the result must include the
   ranking metric needed to audit the answer.
+- For overlap/intersection/exclusion/same/different questions between related tables,
+  the SQL must join or compare on the strongest shared business key and return the
+  metric or compared fields needed to audit the result.
+- For data-quality summaries, reject wide per-table stat CTEs unioned with SELECT *;
+  require long-format metric rows with the same columns in every UNION branch.
 - If ORDER BY determines the chosen record or row order, the ORDER BY metric/expression
   must be present in the final SELECT output with a clear alias.
 If a mandatory check fails, set passes=false and provide corrected_sql when possible.
@@ -400,6 +572,10 @@ does not pass unless the SQL intentionally searched for missing records and the 
 itself answers the question.
 If SQL was safe but returned the wrong shape, missing order, missing rows, empty rows,
 or suspicious columns, set needs_repair=true and repair_tool="sql".
+sql_result_preview is intentionally capped and may contain fewer rows than row_count.
+Do not request repair solely because the preview is shorter than row_count.
+If SQL validation passed and execution returned the requested row_count, do not claim
+the SQL is invalid unless you can identify a concrete schema, logic, or result-shape error.
 If SQL has already failed repeatedly or the analysis cannot reasonably be expressed in
 SQL, set needs_repair=true and repair_tool="python".
 Do not reveal hidden chain-of-thought.
@@ -414,4 +590,6 @@ Return JSON only:
   "confidence": "low" | "medium" | "high"
 }
 Be precise and transparent about uncertainty. Do not fabricate results.
+If validated SQL executed successfully and returned zero rows, treat that as a valid
+finding rather than a technical failure unless the critique reports a concrete issue.
 """

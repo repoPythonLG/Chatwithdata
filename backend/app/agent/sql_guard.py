@@ -47,6 +47,11 @@ class SqlGuard:
 
         if self.dangerous_keyword_pattern.search(stripped):
             errors.append("Only read-only SELECT/WITH queries are allowed.")
+        if self._has_outer_grouped_union_aggregation(stripped):
+            warnings.append(
+                "Check whether each UNION branch is aggregated at the right grain before "
+                "combining grouped counts."
+            )
 
         try:
             parsed = sqlglot.parse(stripped, read="duckdb")
@@ -88,6 +93,8 @@ class SqlGuard:
             column for table in referenced_tables for column in table_columns.get(table, set())
         }
 
+        has_derived_tables = bool(list(tree.find_all(exp.Subquery)))
+
         for column in tree.find_all(exp.Column):
             column_name = column.name
             if column_name == "*":
@@ -106,6 +113,7 @@ class SqlGuard:
                 and column_name not in available_columns
                 and column_name not in projection_aliases
                 and not cte_names
+                and not has_derived_tables
             ):
                 errors.append(f"Unknown unqualified column: {column_name}")
 
@@ -156,3 +164,14 @@ class SqlGuard:
                             f"auditable results: {column_name}"
                         )
         return errors
+
+    @staticmethod
+    def _has_outer_grouped_union_aggregation(sql: str) -> bool:
+        normalized = re.sub(r"\s+", " ", sql.strip().lower())
+        return bool(
+            re.search(
+                r"from\s*\(\s*select\b.+\bunion\s+all\b.+\)\s+as\s+\"?[\w_]+\"?\s+group\s+by",
+                normalized,
+            )
+            and "count(" in normalized
+        )

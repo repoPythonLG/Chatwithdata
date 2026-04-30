@@ -1,0 +1,514 @@
+{
+  "generated_at": "2026-04-30T18:36:51.595Z",
+  "scope": "PO CSV two-table synthetic data QA",
+  "active_sources_verified": [
+    "po_with_cost_center",
+    "po_with_wbs_element"
+  ],
+  "active_tables_verified": [
+    "po_with_cost_center_4abd3763__po_with_cost_center",
+    "po_with_wbs_element_1dc2a327__po_with_wbs_element"
+  ],
+  "data_files": [
+    {
+      "path": "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/po_synthetic/po_with_cost_center.csv",
+      "rows": 52015,
+      "columns": 9
+    },
+    {
+      "path": "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/po_synthetic/po_with_wbs_element.csv",
+      "rows": 18015,
+      "columns": 8
+    }
+  ],
+  "verification": {
+    "full_live_run": {
+      "total_questions": 113,
+      "passed": 104,
+      "failed_during_live_reload": 9
+    },
+    "clean_failure_subset_rerun": {
+      "total_questions": 9,
+      "passed_initially_after_fixes": 8,
+      "remaining_rerun_passed": 1,
+      "open_failures": 0
+    },
+    "backend_tests": "16 passed",
+    "frontend_build": "passed",
+    "note": "The 113-question full run crossed live backend reloads while fixes were applied. Every failure from that run was rerun on the final loaded backend and passed."
+  },
+  "questions": [
+    {
+      "type": "standalone",
+      "question": "What data is available in these two PO tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show row counts for both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "List the columns and what each table appears to represent."
+    },
+    {
+      "type": "standalone",
+      "question": "What are the earliest and latest creation dates in each table?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many distinct purchase orders are in each table?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many distinct PO number and item combinations are in each table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show the distinct company codes in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show distinct plants across both tables in a table."
+    },
+    {
+      "type": "standalone",
+      "question": "Which plants have missing values in either table?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many rows have missing plant values by table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which function areas appear in the WBS table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which function areas appear in the cost center table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Compare row counts by function area text across the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Top 10 function areas by row count in the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Top 10 function areas by row count in the WBS table."
+    },
+    {
+      "type": "standalone",
+      "question": "Which function area has the most purchase order items overall?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show counts by company code and table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show counts by plant and table, sorted highest first."
+    },
+    {
+      "type": "standalone",
+      "question": "Which plant has the most cost center rows?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which plant has the most WBS rows?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show yearly PO creation trend for both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show monthly trend for 2026 in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Which year has the highest number of PO items in the cost center table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which year has the highest number of PO items in the WBS table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show the latest 20 PO items from the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show the latest 20 PO items from the WBS table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show the oldest 20 PO items from both tables combined."
+    },
+    {
+      "type": "standalone",
+      "question": "Find duplicate PO number and item rows in the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Find duplicate PO number and item rows in the WBS table."
+    },
+    {
+      "type": "standalone",
+      "question": "Which PO numbers have the most line items in the cost center table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which PO numbers have the most line items in the WBS table?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many PO item combinations exist in both tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many PO item combinations are only in the WBS table?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many PO item combinations are only in the cost center table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show sample PO items that exist in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show sample PO items that exist only in the WBS table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show sample PO items that exist only in the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Join the two tables on PO number and item and compare plant values."
+    },
+    {
+      "type": "standalone",
+      "question": "Find PO items where plant differs between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Find PO items where company code differs between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Find PO items where function area differs between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Find PO items where function area text differs between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Compare cost_center_wbs to cost_center for matching PO items."
+    },
+    {
+      "type": "standalone",
+      "question": "How many matching PO items have the same cost center and WBS cost center?"
+    },
+    {
+      "type": "standalone",
+      "question": "How many matching PO items have different cost center and WBS cost center?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show the top cost centers by number of PO items."
+    },
+    {
+      "type": "standalone",
+      "question": "Show the top WBS cost centers by number of PO items."
+    },
+    {
+      "type": "standalone",
+      "question": "Which cost centers appear in both cost_center and cost_center_wbs?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which cost centers appear only as WBS cost centers?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which cost centers appear only as normal cost centers?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show function area distribution for cost centers that appear in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show plant distribution for PO items that appear in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Which company code has the highest overlap between the two tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which plant has the highest overlap between the two tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show percentage overlap by company code between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show percentage overlap by plant between the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "For company code 1000, show PO item counts by function area across both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "For plant 1033, compare cost center and WBS rows by function area."
+    },
+    {
+      "type": "standalone",
+      "question": "For plant 1000, what are the top 10 cost centers?"
+    },
+    {
+      "type": "standalone",
+      "question": "For plant 10M1, what function areas are represented?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show rows where func_area is missing in the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show rows where func_area_txt is missing in the cost center table."
+    },
+    {
+      "type": "standalone",
+      "question": "Are there any missing func_area values in the WBS table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Find cost center rows where ekkn_kostl and cost_center are different."
+    },
+    {
+      "type": "standalone",
+      "question": "How many rows have ekkn_kostl different from cost_center by function area?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show the top plants where ekkn_kostl differs from cost_center."
+    },
+    {
+      "type": "standalone",
+      "question": "Show company code and plant combinations with the most rows."
+    },
+    {
+      "type": "standalone",
+      "question": "Which function area text maps to more than one function area code?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which function area code maps to more than one function area text?"
+    },
+    {
+      "type": "standalone",
+      "question": "List all function area codes with their text labels."
+    },
+    {
+      "type": "standalone",
+      "question": "Show count of PO items by company code, plant, and year."
+    },
+    {
+      "type": "standalone",
+      "question": "Rank plants by number of distinct PO numbers."
+    },
+    {
+      "type": "standalone",
+      "question": "Rank function areas by number of distinct PO numbers."
+    },
+    {
+      "type": "standalone",
+      "question": "Show PO numbers that appear with more than five items."
+    },
+    {
+      "type": "standalone",
+      "question": "Show PO numbers that appear in both tables with more than three items."
+    },
+    {
+      "type": "standalone",
+      "question": "Find matching PO items created on different dates across the two tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Find matching PO items where creation dates are the same."
+    },
+    {
+      "type": "standalone",
+      "question": "Show the date range by company code for each table."
+    },
+    {
+      "type": "standalone",
+      "question": "Show the date range by plant for each table."
+    },
+    {
+      "type": "standalone",
+      "question": "What are the most common PO item numbers in each table?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show cost center table counts by PO item number."
+    },
+    {
+      "type": "standalone",
+      "question": "Show WBS table counts by PO item number."
+    },
+    {
+      "type": "standalone",
+      "question": "Which PO item number has the highest overlap between tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "For Information Technology, compare rows by plant across both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "For Manufacturing Support, compare rows by plant across both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "For Corporate Affairs, show yearly trend in both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "For Digitization, list the top cost centers and WBS cost centers."
+    },
+    {
+      "type": "standalone",
+      "question": "Which functional areas exist in WBS but not in cost center?"
+    },
+    {
+      "type": "standalone",
+      "question": "Which functional areas exist in cost center but not in WBS?"
+    },
+    {
+      "type": "standalone",
+      "question": "Show a data quality summary for both tables."
+    },
+    {
+      "type": "standalone",
+      "question": "Show a join quality summary between the two PO tables."
+    },
+    {
+      "type": "standalone",
+      "question": "What questions can I ask about these PO tables?"
+    },
+    {
+      "type": "standalone",
+      "question": "Give me three executive insights from these two tables."
+    },
+    {
+      "type": "followup-1",
+      "turn": 1,
+      "question": "Show the top 5 plants by cost center row count."
+    },
+    {
+      "type": "followup-1",
+      "turn": 2,
+      "question": "Now show the same plants from the WBS table."
+    },
+    {
+      "type": "followup-1",
+      "turn": 3,
+      "question": "Compare those side by side and sort by the largest difference."
+    },
+    {
+      "type": "followup-1",
+      "turn": 4,
+      "question": "Only show differences greater than 500 rows."
+    },
+    {
+      "type": "followup-2",
+      "turn": 1,
+      "question": "Which function areas have the most matching PO items across both tables?"
+    },
+    {
+      "type": "followup-2",
+      "turn": 2,
+      "question": "Now break the top function area down by plant."
+    },
+    {
+      "type": "followup-2",
+      "turn": 3,
+      "question": "Show that as a chart-ready table sorted highest first."
+    },
+    {
+      "type": "followup-2",
+      "turn": 4,
+      "question": "Now include company code in that breakdown."
+    },
+    {
+      "type": "followup-3",
+      "turn": 1,
+      "question": "Find PO item combinations where cost_center_wbs is different from cost_center."
+    },
+    {
+      "type": "followup-3",
+      "turn": 2,
+      "question": "Show the top 10 mismatches by function area."
+    },
+    {
+      "type": "followup-3",
+      "turn": 3,
+      "question": "Now only show company code 1000."
+    },
+    {
+      "type": "followup-3",
+      "turn": 4,
+      "question": "For those results, summarize the data quality issue in plain language."
+    },
+    {
+      "type": "followup-4",
+      "turn": 1,
+      "question": "Show yearly counts for both tables."
+    },
+    {
+      "type": "followup-4",
+      "turn": 2,
+      "question": "Now focus on the latest year only."
+    },
+    {
+      "type": "followup-4",
+      "turn": 3,
+      "question": "Break that latest year down by month and table."
+    },
+    {
+      "type": "followup-4",
+      "turn": 4,
+      "question": "Which month had the highest combined PO item count?"
+    },
+    {
+      "type": "followup-5",
+      "turn": 1,
+      "question": "List PO numbers that appear in both tables with multiple items."
+    },
+    {
+      "type": "followup-5",
+      "turn": 2,
+      "question": "Pick the PO with the most items and show its line details."
+    },
+    {
+      "type": "followup-5",
+      "turn": 3,
+      "question": "Now compare its function areas across the two tables."
+    },
+    {
+      "type": "followup-5",
+      "turn": 4,
+      "question": "Are there any inconsistencies for that PO?"
+    }
+  ]
+}

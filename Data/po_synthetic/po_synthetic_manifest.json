@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-04-30T14:48:32.939Z",
+  "files": [
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/po_synthetic/po_with_wbs_element.csv",
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/po_synthetic/po_with_cost_center.csv"
+  ],
+  "row_counts": {
+    "po_with_wbs_element": 18015,
+    "po_with_cost_center": 52015
+  },
+  "relationship_hints": [
+    "po_number + po_item links the two tables when the same purchase order item is represented by WBS element and cost center data.",
+    "cost_center_wbs can be compared with cost_center for overlap/mismatch analysis.",
+    "func_area and func_area_txt can be compared across both tables for consistency."
+  ]
+}

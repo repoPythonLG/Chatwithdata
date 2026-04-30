@@ -15,6 +15,7 @@ from app.agent.prompts import (
     FINAL_SYSTEM,
     METADATA_OVERVIEW_CRITIC_SYSTEM,
     METADATA_OVERVIEW_SYSTEM,
+    PLAN_AUDIT_SYSTEM,
     PLANNER_SYSTEM,
     PYTHON_SYSTEM,
     QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
@@ -245,6 +246,7 @@ class DataChatAgent:
         except Exception as exc:
             plan = self._fallback_plan(state["user_question"], state.get("question_type", ""))
             plan["llm_warning"] = str(exc)
+        plan = await self._audit_execution_plan(state, plan)
         if (
             plan.get("tool") == "python"
             and state.get("question_type") == "requires_chart"
@@ -259,6 +261,39 @@ class DataChatAgent:
             state, "Planning", "completed", f"Plan selected {plan.get('tool', 'sql')} execution."
         )
         return state
+
+    async def _audit_execution_plan(
+        self, state: AgentState, plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        prompt = [
+            {"role": "system", "content": PLAN_AUDIT_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": state["user_question"],
+                        "classification": state.get("classification", {}),
+                        "proposed_plan": plan,
+                        "schema": state.get("schema_context", ""),
+                        "recent_messages": state.get("messages", [])[-8:],
+                    }
+                ),
+            },
+        ]
+        try:
+            audit = await self.llm.complete_json(prompt, max_tokens=900)
+        except Exception as exc:
+            plan["plan_audit_warning"] = str(exc)
+            return plan
+
+        if not isinstance(audit, dict):
+            return plan
+        audited_tool = str(audit.get("tool") or "").strip()
+        if audited_tool in {"question_suggestions", "metadata", "sql", "python", "clarify", "none"}:
+            if not self._json_bool(audit.get("passes"), default=True):
+                plan = {**plan, "tool": audited_tool}
+                plan["plan_audit_reasoning_summary"] = audit.get("reasoning_summary", "")
+        return plan
 
     async def generate_sql(self, state: AgentState) -> AgentState:
         repair_feedback = self._sql_repair_feedback(state)
@@ -1368,17 +1403,19 @@ class DataChatAgent:
     def _build_artifacts(self, state: AgentState) -> list[dict[str, Any]]:
         artifacts: list[dict[str, Any]] = []
         python_result = state.get("python_result", {})
-        prefer_python = bool(python_result.get("ok"))
-        if not prefer_python and state.get("sql_result", {}).get("rows"):
+        prefer_python = bool(
+            python_result.get("ok")
+            and (python_result.get("result_table") or python_result.get("chart"))
+        )
+        sql_result = state.get("sql_result", {})
+        if not prefer_python and sql_result.get("columns"):
             artifacts.append(
                 {
                     "type": "table",
                     "title": "SQL result",
-                    "columns": state["sql_result"].get("columns", []),
-                    "rows": state["sql_result"].get("rows", [])[
-                        : self.settings.sql_preview_row_limit
-                    ],
-                    "truncated": state["sql_result"].get("truncated", False),
+                    "columns": sql_result.get("columns", []),
+                    "rows": sql_result.get("rows", [])[: self.settings.sql_preview_row_limit],
+                    "truncated": sql_result.get("truncated", False),
                 }
             )
         if python_result.get("result_table"):
@@ -1474,7 +1511,7 @@ class DataChatAgent:
             state.get("critique", {}).get("passes"), default=True
         )
         if critique_passes and (
-            state.get("sql_result", {}).get("rows")
+            state.get("sql_result")
             or state.get("python_result", {}).get("ok")
         ):
             return []
