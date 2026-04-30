@@ -14,9 +14,10 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
             {response.confidence} confidence
           </Badge>
         </div>
-        <p className="whitespace-pre-wrap leading-7 text-ink-900 dark:text-ink-50">{response.answer}</p>
+        <FormattedAnswer text={response.answer} />
         {response.reasoning_summary ? (
-          <p className="rounded-2xl bg-ink-50 p-3 text-sm text-ink-700 dark:bg-white/5 dark:text-ink-100">
+          <p className="rounded-2xl bg-ink-50 p-3 text-sm leading-6 text-ink-700 dark:bg-white/5 dark:text-ink-100">
+            <span className="font-semibold">How this was answered: </span>
             {response.reasoning_summary}
           </p>
         ) : null}
@@ -67,6 +68,64 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
       ) : null}
     </div>
   );
+}
+
+function FormattedAnswer({ text }: { text: string }) {
+  const blocks = toBlocks(text);
+
+  return (
+    <div className="space-y-4 leading-7 text-ink-900 dark:text-ink-50">
+      {blocks.map((block, index) =>
+        block.type === "list" ? (
+          <ul className="space-y-2" key={index}>
+            {block.items.map((item, itemIndex) => (
+              <li className="flex gap-3" key={`${index}-${itemIndex}`}>
+                <span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-harbor-500" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className={index === 0 ? "text-lg font-semibold" : ""} key={index}>
+            {block.text}
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+
+type AnswerBlock =
+  | { type: "paragraph"; text: string }
+  | { type: "list"; items: string[] };
+
+function toBlocks(text: string): AnswerBlock[] {
+  const blocks: AnswerBlock[] = [];
+  let pendingList: string[] = [];
+
+  function flushList() {
+    if (pendingList.length) {
+      blocks.push({ type: "list", items: pendingList });
+      pendingList = [];
+    }
+  }
+
+  text.split("\n").forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      flushList();
+      return;
+    }
+    if (line.startsWith("- ")) {
+      pendingList.push(line.slice(2));
+      return;
+    }
+    flushList();
+    blocks.push({ type: "paragraph", text: line });
+  });
+  flushList();
+
+  return blocks;
 }
 
 function CodeBlock({ title, code }: { title: string; code: string }) {

@@ -850,15 +850,17 @@ class DataChatAgent:
             {table.canonical_name: table.original_name for table in tables},
         )
         row_phrase = (
-            f" with about {total_rows:,} scanned rows"
+            f", covering about {total_rows:,} scanned rows"
             if known_row_counts and len(known_row_counts) == table_count
             else ""
         )
+        source_label = "data source" if source_count == 1 else "data sources"
+        table_label = "table or sheet" if table_count == 1 else "tables or sheets"
         answer_parts = [
             "Here is the current data landscape.",
             "",
-            f"I see {source_count} configured data source(s) with {table_count} "
-            f"queryable tables or sheets{row_phrase}. The data currently covers:",
+            f"I see {source_count} configured {source_label} with {table_count} "
+            f"queryable {table_label}{row_phrase}. The data currently covers:",
             *self._metadata_business_summary_lines(schema.data_sources, tables),
         ]
         if relationship_lines:
@@ -876,12 +878,18 @@ class DataChatAgent:
         )
 
         artifact_rows = []
+        dataset_row_counts: dict[str, int] = {}
         for table in tables:
             source = source_by_id.get(table.data_source_id)
+            dataset_name = self._friendly_name(source.name if source else table.data_source_id)
             columns = [column.normalized_name for column in table.columns]
+            if table.row_count is not None:
+                dataset_row_counts[dataset_name] = (
+                    dataset_row_counts.get(dataset_name, 0) + table.row_count
+                )
             artifact_rows.append(
                 {
-                    "Dataset": self._friendly_name(source.name if source else table.data_source_id),
+                    "Dataset": dataset_name,
                     "Table / sheet": table.original_name,
                     "Rows": table.row_count,
                     "What it contains": self._metadata_table_description(table),
@@ -898,6 +906,47 @@ class DataChatAgent:
             caveats.append("One or more configured data sources are not active.")
         caveats.append("If files changed since the last scan, rescan before relying on row counts.")
 
+        artifacts: list[dict[str, Any]] = [
+            {
+                "type": "table",
+                "title": "Data Catalog",
+                "columns": [
+                    "Dataset",
+                    "Table / sheet",
+                    "Rows",
+                    "What it contains",
+                    "Key fields",
+                    "Sample row",
+                ],
+                "rows": artifact_rows[:preview_limit],
+                "truncated": len(artifact_rows) > preview_limit,
+            }
+        ]
+        if dataset_row_counts:
+            artifacts.append(
+                {
+                    "type": "chart",
+                    "title": "Rows by Dataset",
+                    "spec": {
+                        "data": [
+                            {
+                                "type": "bar",
+                                "x": list(dataset_row_counts.keys()),
+                                "y": list(dataset_row_counts.values()),
+                                "marker": {"color": "#0f766e"},
+                                "hovertemplate": "%{x}<br>%{y:,} rows<extra></extra>",
+                            }
+                        ],
+                        "layout": {
+                            "margin": {"l": 52, "r": 24, "t": 24, "b": 72},
+                            "xaxis": {"title": "Dataset"},
+                            "yaxis": {"title": "Rows"},
+                            "showlegend": False,
+                        },
+                    },
+                }
+            )
+
         return {
             "answer": "\n".join(answer_parts),
             "reasoning_summary": (
@@ -907,22 +956,7 @@ class DataChatAgent:
             ),
             "caveats": caveats,
             "confidence": "high",
-            "artifacts": [
-                {
-                    "type": "table",
-                    "title": "Data Catalog",
-                    "columns": [
-                        "Dataset",
-                        "Table / sheet",
-                        "Rows",
-                        "What it contains",
-                        "Key fields",
-                        "Sample row",
-                    ],
-                    "rows": artifact_rows[:preview_limit],
-                    "truncated": len(artifact_rows) > preview_limit,
-                }
-            ],
+            "artifacts": artifacts,
             "sources": [],
         }
 
@@ -974,24 +1008,25 @@ class DataChatAgent:
         column_text = " ".join(column.normalized_name for column in table.columns).lower()
         name_text = table.original_name.lower()
         combined = f"{name_text} {column_text}"
-        if any(term in combined for term in ("inventory", "sku", "warehouse", "reorder")):
-            return "Inventory quantities, value, warehouses, and reorder signals."
-        if any(term in combined for term in ("quality", "inspection", "defect")):
+        tokens = set(DataChatAgent._normalize_text(combined).split())
+        if tokens & {"quality", "inspection", "inspections", "defect", "defects"}:
             return "Quality inspection outcomes, sample sizes, and defect rates."
-        if any(term in combined for term in ("supplier", "lead_time", "contract")):
+        if tokens & {"supplier", "suppliers", "lead", "contract"}:
             return "Supplier coverage, countries, lead times, and contract status."
-        if any(term in combined for term in ("project", "budget", "sponsor")):
-            return "Project master data, budgets, sponsors, regions, and business units."
-        if any(term in combined for term in ("spend", "transaction", "vendor", "amount")):
-            return "Spend transactions, vendors, cost categories, dates, and amounts."
-        if any(term in combined for term in ("milestone", "planned_date", "actual_date")):
+        if tokens & {"milestone", "milestones", "planned", "actual"}:
             return "Milestone schedules, completion dates, and delivery status."
-        if any(term in combined for term in ("customer", "segment", "account_owner")):
-            return "Customer master data, regions, segments, and account ownership."
-        if any(term in combined for term in ("order", "revenue", "margin", "channel")):
-            return "Orders, revenue, margins, product families, status, and channels."
-        if any(term in combined for term in ("target", "monthly", "month")):
+        if tokens & {"spend", "transaction", "transactions", "vendor", "amount"}:
+            return "Spend transactions, vendors, cost categories, dates, and amounts."
+        if tokens & {"project", "projects", "budget", "sponsor"}:
+            return "Project master data, budgets, sponsors, regions, and business units."
+        if tokens & {"target", "targets", "monthly", "month"}:
             return "Monthly targets by period and business dimension."
+        if tokens & {"order", "orders", "revenue", "margin", "channel"}:
+            return "Orders, revenue, margins, product families, status, and channels."
+        if tokens & {"customer", "customers", "segment", "owner"}:
+            return "Customer master data, regions, segments, and account ownership."
+        if tokens & {"inventory", "warehouse", "reorder"}:
+            return "Inventory quantities, value, warehouses, and reorder signals."
         if "summary" in combined or "metric" in combined:
             return "Precalculated summary metrics from the source workbook."
         return "Structured business records available for querying and analysis."
@@ -1007,7 +1042,7 @@ class DataChatAgent:
             return "Structured business records."
         if len(unique) == 1:
             return f"{unique[0]}."
-        return "; ".join(unique[:3]) + "."
+        return "; ".join(unique[:4]) + "."
 
     @staticmethod
     def _friendly_name(value: str) -> str:
