@@ -109,6 +109,8 @@ class SqlGuard:
             ):
                 errors.append(f"Unknown unqualified column: {column_name}")
 
+        errors.extend(self._order_by_projection_errors(tree, available_columns))
+
         return SqlValidationResult(
             is_valid=not errors,
             errors=errors,
@@ -116,3 +118,41 @@ class SqlGuard:
             used_tables=sorted(set(referenced_tables)),
             used_columns={key: sorted(value) for key, value in used_columns.items() if value},
         )
+
+    @staticmethod
+    def _order_by_projection_errors(
+        tree: exp.Expression, available_columns: set[str]
+    ) -> list[str]:
+        errors: list[str] = []
+        for select in tree.find_all(exp.Select):
+            order = select.args.get("order")
+            if not order:
+                continue
+            projected_names: set[str] = set()
+            has_star = False
+            for projection in select.expressions:
+                if isinstance(projection, exp.Star):
+                    has_star = True
+                    continue
+                alias = projection.alias
+                if alias:
+                    projected_names.add(alias.lower())
+                expression = projection.this if isinstance(projection, exp.Alias) else projection
+                if isinstance(expression, exp.Column):
+                    projected_names.add(expression.name.lower())
+            if has_star:
+                continue
+
+            for ordered in order.expressions:
+                for column in ordered.find_all(exp.Column):
+                    column_name = column.name
+                    if (
+                        column_name
+                        and column_name in available_columns
+                        and column_name.lower() not in projected_names
+                    ):
+                        errors.append(
+                            "ORDER BY column must appear in the SELECT output for "
+                            f"auditable results: {column_name}"
+                        )
+        return errors

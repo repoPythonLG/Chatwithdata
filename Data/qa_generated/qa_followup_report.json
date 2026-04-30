@@ -1,0 +1,1582 @@
+{
+  "generated_at": "2026-04-30T12:56:35.796Z",
+  "total_sequences": 4,
+  "passed_sequences": 4,
+  "failed_sequences": 0,
+  "results": [
+    {
+      "id": "manufacturing-low-stock-followups",
+      "sourceNames": [
+        "qa_manufacturing_quality"
+      ],
+      "conversation_id": "c6c589f3-a4e4-4a21-adac-a85e78eefa02",
+      "passed": true,
+      "steps": [
+        {
+          "step": 1,
+          "message": "Which SKUs are below reorder point?",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 10.8,
+          "confidence": "high",
+          "sql_query": "SELECT \"sku\" FROM \"qa_manufacturing_quality_bffee73d__inventory\" WHERE \"quantity_tons\" < \"reorder_point\"",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "The SKUs below their reorder point are: SC-100, MT-510, and PL-330.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:53:41.025252",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:53:41.025256",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:53:41.025589",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:53:42.510622",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:53:42.511044",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:53:42.516661",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:53:42.517132",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:53:44.678979",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:53:44.681146",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:53:46.418695",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:53:46.419094",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:53:48.466795",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:53:48.468005",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 3 rows.",
+              "timestamp": "2026-04-30T12:53:48.528712",
+              "metadata": {
+                "duration_ms": 59.441791963763535
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:53:48.529417",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL query correctly selects SKUs where quantity_tons < reorder_point, returns the required sku column, and aligns with the analysis contract (no forbidden filters applied). The result table shows 3 SKUs (SC-100, MT-510, PL-330), individually identifying each below-reorder-point SKU as requested.",
+              "timestamp": "2026-04-30T12:53:50.207505",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:53:51.814229",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:53:51.814254",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 2,
+          "message": "Show the supplier and warehouse details for those, highest shortage first.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 16.6,
+          "confidence": "high",
+          "sql_query": "WITH shortage AS (\n  SELECT\n    \"sku\",\n    \"warehouse_id\",\n    \"quantity_tons\",\n    \"reorder_point\",\n    (\"reorder_point\" - \"quantity_tons\") AS \"shortage_tons\"\n  FROM \"qa_manufacturing_quality_bffee73d__inventory\"\n  WHERE \"quantity_tons\" < \"reorder_point\"\n),\nenriched AS (\n  SELECT\n    s.\"sku\",\n    s.\"shortage_tons\",\n    sup.\"supplier_name\",\n    sup.\"country\" AS \"supplier_country\",\n    sup.\"lead_time_days\" AS \"supplier_lead_time_days\",\n    wh.\"warehouse_name\",\n    wh.\"city\" AS \"warehouse_city\",\n    wh.\"region\" AS \"warehouse_region\",\n    s.\"quantity_tons\",\n    s.\"reorder_point\"\n  FROM shortage s\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__purchaseorders\" po\n    ON s.\"sku\" = po.\"sku\"\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__suppliers\" sup\n    ON po.\"supplier_id\" = sup.\"supplier_id\" AND po.\"sku\" = sup.\"sku\"\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__warehouses\" wh\n    ON s.\"warehouse_id\" = wh.\"warehouse_id\"\n)\nSELECT DISTINCT\n  \"sku\",\n  \"shortage_tons\",\n  \"supplier_name\",\n  \"supplier_country\",\n  \"supplier_lead_time_days\",\n  \"warehouse_name\",\n  \"warehouse_city\",\n  \"warehouse_region\",\n  \"quantity_tons\",\n  \"reorder_point\"\nFROM enriched\nORDER BY \"shortage_tons\" DESC\nLIMIT 100;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "The highest shortage is PL-330 with 25 tons below reorder point (55 tons in stock, reorder point 80), supplied by Rhine Compounds in the Netherlands (lead time: 16 days), stored at Rotterdam Terminal in Europe. Next is MT-510 with 13 tons shortage (32 tons in stock vs. 45 reorder point), supplied by Atlas Metals (USA, 30-day lead time) at Houston Depot, North America. Last is SC-100 with 6 tons shortage (84 tons in stock vs. 90 reorder point), supplied by NovaChem (Germany, 21-day lead time) at Dammam Hub, Middle East.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:53:51.840894",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:53:51.840899",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:53:51.841353",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:53:53.395401",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:53:53.395897",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:53:53.400164",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:53:53.400496",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:53:55.839003",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:53:55.839787",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:54:00.039675",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:54:00.040330",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:54:04.749689",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:54:04.750667",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 3 rows.",
+              "timestamp": "2026-04-30T12:54:04.801510",
+              "metadata": {
+                "duration_ms": 49.92308293003589
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:54:04.802195",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The executed SQL correctly identifies SKUs below reorder point (SC-100, MT-510, PL-330), computes shortage as reorder_point - quantity_tons, joins with suppliers and warehouses as needed, orders by shortage descending, and returns all requested fields including supplier and warehouse details. The result table contains 3 rows with full identifying and ranking information.",
+              "timestamp": "2026-04-30T12:54:06.384891",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:54:08.365938",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:54:08.365958",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 3,
+          "message": "Now only show the high-risk supplier items.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 14.9,
+          "confidence": "high",
+          "sql_query": "WITH shortage AS (\n  SELECT\n    \"sku\",\n    \"warehouse_id\",\n    \"quantity_tons\",\n    \"reorder_point\",\n    (\"reorder_point\" - \"quantity_tons\") AS \"shortage_tons\"\n  FROM \"qa_manufacturing_quality_bffee73d__inventory\"\n  WHERE \"quantity_tons\" < \"reorder_point\"\n),\nenriched AS (\n  SELECT DISTINCT\n    s.\"sku\",\n    s.\"shortage_tons\",\n    sup.\"supplier_name\",\n    sup.\"risk_rating\",\n    wh.\"warehouse_name\",\n    s.\"quantity_tons\",\n    s.\"reorder_point\"\n  FROM shortage s\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__purchaseorders\" po\n    ON s.\"sku\" = po.\"sku\"\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__suppliers\" sup\n    ON po.\"supplier_id\" = sup.\"supplier_id\" AND po.\"sku\" = sup.\"sku\"\n  LEFT JOIN \"qa_manufacturing_quality_bffee73d__warehouses\" wh\n    ON s.\"warehouse_id\" = wh.\"warehouse_id\"\n)\nSELECT\n  \"sku\",\n  \"supplier_name\",\n  \"risk_rating\",\n  \"quantity_tons\",\n  \"reorder_point\",\n  \"shortage_tons\",\n  \"warehouse_name\"\nFROM enriched\nWHERE \"risk_rating\" = 'High'\nORDER BY \"shortage_tons\" DESC\nLIMIT 100;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "There is 1 high-risk supplier item: MT-510 supplied by Atlas Metals (risk rating: High), with 32 tons in stock against a reorder point of 45 tons (shortage: 13 tons), located in the Houston Depot.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:54:08.402196",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:54:08.402269",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:54:08.402766",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as ambiguous.",
+              "timestamp": "2026-04-30T12:54:09.948625",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:54:09.949149",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:54:09.953243",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:54:09.953561",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Asking the LLM to resolve ambiguous wording against the current schema.",
+              "timestamp": "2026-04-30T12:54:09.953564",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "LLM resolved request as sql_answerable.",
+              "timestamp": "2026-04-30T12:54:11.815320",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:54:14.169458",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:54:14.170388",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:54:17.482742",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:54:17.483167",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:54:20.016153",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:54:20.016888",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 1 rows.",
+              "timestamp": "2026-04-30T12:54:20.066658",
+              "metadata": {
+                "duration_ms": 48.75629208981991
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:54:20.067434",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The executed SQL correctly filters for inventory items below reorder point, joins to suppliers via purchaseorders, and applies the 'High' risk_rating filter. Result shows MT-510 supplied by Atlas Metals (High risk), with all requested fields (sku, supplier_name, risk_rating, quantity_tons, reorder_point, shortage_tons, warehouse_name) present and ordered by shortage descending. Matches plan and user intent precisely.",
+              "timestamp": "2026-04-30T12:54:21.690375",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:54:23.310002",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:54:23.310023",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        }
+      ]
+    },
+    {
+      "id": "retail-revenue-followups",
+      "sourceNames": [
+        "qa_retail_operations"
+      ],
+      "conversation_id": "7601b4ca-e9ca-479e-8105-cdd4f3b344cd",
+      "passed": true,
+      "steps": [
+        {
+          "step": 1,
+          "message": "Show revenue by region for closed orders.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 12.2,
+          "confidence": "high",
+          "sql_query": "WITH closed_orders AS (\n  SELECT\n    o.\"order_id\",\n    c.\"region\"\n  FROM \"qa_retail_operations_bb467dcc__orders\" AS o\n  JOIN \"qa_retail_operations_bb467dcc__customers\" AS c\n    ON o.\"customer_id\" = c.\"customer_id\"\n  WHERE o.\"status\" = 'Closed'\n),\nrevenue_by_region AS (\n  SELECT\n    co.\"region\",\n    SUM(ol.\"quantity\" * p.\"unit_price\" * (1 - ol.\"discount_pct\")) AS \"revenue\"\n  FROM closed_orders AS co\n  JOIN \"qa_retail_operations_bb467dcc__orderlines\" AS ol\n    ON co.\"order_id\" = ol.\"order_id\"\n  JOIN \"qa_retail_operations_bb467dcc__products\" AS p\n    ON ol.\"product_id\" = p.\"product_id\"\n  GROUP BY co.\"region\"\n)\nSELECT\n  \"region\",\n  \"revenue\"\nFROM revenue_by_region\nORDER BY \"revenue\" DESC;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "Revenue by region for closed orders is: Middle East ($15,793.80), Europe ($13,440.00), North America ($3,100.00), and Asia ($1,300.00), ordered from highest to lowest revenue.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:54:23.336662",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:54:23.336671",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:54:23.337086",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:54:24.716458",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:54:24.716955",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:54:24.722182",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:54:24.722582",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:54:26.385103",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:54:26.386129",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:54:29.633960",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:54:29.634493",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:54:32.191664",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:54:32.192532",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 4 rows.",
+              "timestamp": "2026-04-30T12:54:32.284297",
+              "metadata": {
+                "duration_ms": 90.36666702013463
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:54:32.285375",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL correctly joins orders, customers, orderlines, and products to compute revenue for closed orders, applying quantity × unit_price × (1 - discount_pct). The result table includes both required columns (region, revenue), is filtered properly (status = 'Closed'), and is aggregated by region with descending revenue order—exactly matching the question's request.",
+              "timestamp": "2026-04-30T12:54:34.113632",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:54:35.465568",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:54:35.465577",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 2,
+          "message": "Now break the highest region down by product category.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 11.6,
+          "confidence": "high",
+          "sql_query": "WITH closed_orders_middle_east AS (\n  SELECT\n    o.\"order_id\"\n  FROM \"qa_retail_operations_bb467dcc__orders\" AS o\n  JOIN \"qa_retail_operations_bb467dcc__customers\" AS c\n    ON o.\"customer_id\" = c.\"customer_id\"\n  WHERE o.\"status\" = 'Closed'\n    AND c.\"region\" = 'Middle East'\n)\nSELECT\n  p.\"category\",\n  SUM(ol.\"quantity\" * p.\"unit_price\" * (1 - ol.\"discount_pct\")) AS \"revenue\"\nFROM closed_orders_middle_east AS co\nJOIN \"qa_retail_operations_bb467dcc__orderlines\" AS ol\n  ON co.\"order_id\" = ol.\"order_id\"\nJOIN \"qa_retail_operations_bb467dcc__products\" AS p\n  ON ol.\"product_id\" = p.\"product_id\"\nGROUP BY p.\"category\"\nORDER BY \"revenue\" DESC;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "For the Middle East region (the highest-revenue region), revenue by product category from closed orders is: Materials ($13,120.80) and Components ($2,673.00).",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:54:35.490736",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:54:35.490743",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:54:35.491141",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:54:36.799571",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:54:36.800135",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:54:36.804077",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:54:36.804408",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:54:39.063086",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:54:39.065044",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:54:41.520045",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:54:41.520940",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:54:44.069882",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:54:44.070573",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 2 rows.",
+              "timestamp": "2026-04-30T12:54:44.123862",
+              "metadata": {
+                "duration_ms": 52.23400006070733
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:54:44.124528",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL query correctly filters to closed orders in the Middle East region, joins orderlines and products, and calculates revenue per product category using quantity × unit_price × (1 − discount_pct). The result table contains the required columns (category, revenue), is sorted descending by revenue, and contains 2 non-empty rows representing the only categories (Materials, Components) with revenue in that region. This directly answers the follow-up question.",
+              "timestamp": "2026-04-30T12:54:45.811598",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:54:47.057685",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:54:47.057698",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 3,
+          "message": "Put that in a chart-ready table sorted highest first.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 19.6,
+          "confidence": "high",
+          "sql_query": "WITH closed_orders_middle_east AS (\n  SELECT\n    o.\"order_id\"\n  FROM \"qa_retail_operations_bb467dcc__orders\" AS o\n  JOIN \"qa_retail_operations_bb467dcc__customers\" AS c\n    ON o.\"customer_id\" = c.\"customer_id\"\n  WHERE o.\"status\" = 'Closed'\n    AND c.\"region\" = 'Middle East'\n)\nSELECT\n  p.\"category\",\n  SUM(ol.\"quantity\" * p.\"unit_price\" * (1 - ol.\"discount_pct\")) AS \"revenue\"\nFROM closed_orders_middle_east AS co\nJOIN \"qa_retail_operations_bb467dcc__orderlines\" AS ol\n  ON co.\"order_id\" = ol.\"order_id\"\nJOIN \"qa_retail_operations_bb467dcc__products\" AS p\n  ON ol.\"product_id\" = p.\"product_id\"\nGROUP BY p.\"category\"\nORDER BY \"revenue\" DESC;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "Here is the chart-ready table sorted by revenue (highest first) for product categories in the Middle East region with closed orders: Materials ($13,120.80) and Components ($2,673.00).",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:54:47.083062",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:54:47.083069",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:54:47.083436",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:54:50.315766",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:54:50.316196",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:54:50.322109",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:54:50.322540",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:54:52.582248",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:54:52.582925",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:54:57.653394",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:54:57.653994",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:55:03.324369",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:55:03.325617",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 2 rows.",
+              "timestamp": "2026-04-30T12:55:03.396072",
+              "metadata": {
+                "duration_ms": 69.01950004976243
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:55:03.396852",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The query correctly retrieves revenue by product category for the Middle East region (the highest-revenue region from prior results), filters for Closed orders, uses the discount column appropriately for net revenue calculation, and returns a chart-ready table sorted by revenue descending with required columns 'category' and 'revenue'. Result table contains two fully populated rows with correct metrics.",
+              "timestamp": "2026-04-30T12:55:05.290905",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:55:06.700799",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:55:06.700808",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        }
+      ]
+    },
+    {
+      "id": "messy-renewal-followups",
+      "sourceNames": [
+        "qa_messy_sales_export"
+      ],
+      "conversation_id": "180eaf1f-f3ce-40fd-897e-6ef191c4358f",
+      "passed": true,
+      "steps": [
+        {
+          "step": 1,
+          "message": "Which accounts have revenue above 20000?",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 13.2,
+          "confidence": "high",
+          "sql_query": "SELECT DISTINCT \"customer_name\" AS \"account\"\nFROM \"qa_messy_sales_export_82fd0a55__q2_sales_export\"\nWHERE \"revenue_usd\" > 20000",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "The accounts with revenue above $20,000 are: Sakura Labs, Rhine Parts, and Desert Pearl.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:55:06.727846",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:55:06.727854",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:55:06.728304",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:55:09.774310",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:55:09.774738",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:55:09.778654",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:55:09.778999",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:55:11.925029",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:55:11.925700",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:55:13.378536",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:55:13.379053",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:55:15.916606",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:55:15.917246",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 3 rows.",
+              "timestamp": "2026-04-30T12:55:15.941848",
+              "metadata": {
+                "duration_ms": 23.820417001843452
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:55:15.942504",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL query correctly identifies accounts with revenue above 20,000 by filtering the q2_sales_export sheet on revenue_usd > 20000 and selecting distinct customer_name as 'account'. The result contains 3 accounts (Sakura Labs, Rhine Parts, Desert Pearl), matching the schema and requirements in the analysis_contract.",
+              "timestamp": "2026-04-30T12:55:18.169917",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:55:19.910683",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:55:19.910692",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 2,
+          "message": "Of those, which have renewal health scores below 70?",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 10.3,
+          "confidence": "high",
+          "sql_query": "SELECT rw.\"account\", rw.\"health_score\"\nFROM \"qa_messy_sales_export_82fd0a55__renewal_watchlist\" rw\nINNER JOIN (\n  SELECT DISTINCT \"customer_name\" AS \"account\"\n  FROM \"qa_messy_sales_export_82fd0a55__q2_sales_export\"\n  WHERE \"revenue_usd\" > 20000\n) high_rev ON rw.\"account\" = high_rev.\"account\"\nWHERE rw.\"health_score\" < 70",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "Desert Pearl has a renewal health score of 64, which is below 70.",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:55:19.934603",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:55:19.934607",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:55:19.934907",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:55:21.345505",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:55:21.346366",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:55:21.350424",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:55:21.350789",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:55:22.880344",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:55:22.881065",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:55:25.032645",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:55:25.033257",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:55:27.544487",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:55:27.545396",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 1 rows.",
+              "timestamp": "2026-04-30T12:55:27.573283",
+              "metadata": {
+                "duration_ms": 26.556541095487773
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:55:27.574063",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL correctly filtered accounts with revenue > $20,000 (Sakura Labs, Rhine Parts, Desert Pearl), joined with renewal_watchlist, and returned only those with health_score < 70. Result shows Desert Pearl with health_score 64, which matches the expected account and metric.",
+              "timestamp": "2026-04-30T12:55:28.941125",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:55:30.253579",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:55:30.253588",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        }
+      ]
+    },
+    {
+      "id": "people-risk-followups",
+      "sourceNames": [
+        "qa_people_analytics"
+      ],
+      "conversation_id": "4c1186a6-1d59-4086-96f9-f39bd7ef19eb",
+      "passed": true,
+      "steps": [
+        {
+          "step": 1,
+          "message": "Which employees have expired training as of 2026-04-30?",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 12.2,
+          "confidence": "high",
+          "sql_query": "SELECT \n  t.\"employee_id\",\n  e.\"employee_name\",\n  t.\"course_name\",\n  t.\"expires_on\"\nFROM \n  \"qa_people_analytics_a81dc1b5__trainingcompletions\" AS t\nJOIN \n  \"qa_people_analytics_a81dc1b5__employees\" AS e\n  ON t.\"employee_id\" = e.\"employee_id\"\nWHERE \n  CAST(t.\"expires_on\" AS DATE) < CAST('2026-04-30' AS DATE)",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "The following employees have expired training as of 2026-04-30:\n\n- Maya Chen (E001): Process Safety (expired 2026-04-03)\n- Samir Khan (E002): Process Safety (expired 2025-10-12)\n- Aisha Noor (E004): Data Privacy (expired 2026-02-15)\n- Jon Miller (E005): Process Safety (expired 2025-01-10)",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:55:30.280004",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:55:30.280017",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:55:30.280405",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:55:31.734249",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:55:31.734870",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:55:31.738948",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:55:31.739400",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:55:33.860864",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:55:33.868216",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:55:36.050479",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:55:36.050903",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:55:38.855407",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:55:38.857184",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 4 rows.",
+              "timestamp": "2026-04-30T12:55:38.900966",
+              "metadata": {
+                "duration_ms": 42.84279199782759
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:55:38.901632",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The SQL query correctly identifies all employees with expired training as of 2026-04-30 by filtering trainingcompletions where expires_on < '2026-04-30', joining with employees for names, and returning the required columns (employee_id, employee_name, course_name, expires_on). The result contains 4 expired records consistent with the schema and expected behavior.",
+              "timestamp": "2026-04-30T12:55:40.697991",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:55:42.439085",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:55:42.439097",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        },
+        {
+          "step": 2,
+          "message": "Now show only those with high risk_flag or performance below 3.2.",
+          "passed": true,
+          "failures": [],
+          "elapsed_seconds": 53.4,
+          "confidence": "high",
+          "sql_query": "WITH expired_training AS (\n  SELECT\n    t.\"employee_id\"\n  FROM\n    \"qa_people_analytics_a81dc1b5__trainingcompletions\" AS t\n  WHERE\n    CAST(t.\"expires_on\" AS DATE) < CAST('2026-04-30' AS DATE)\n),\nfiltered_employees AS (\n  SELECT\n    e.\"employee_id\",\n    e.\"employee_name\",\n    p.\"risk_flag\",\n    p.\"performance_score\"\n  FROM\n    \"qa_people_analytics_a81dc1b5__employees\" AS e\n  JOIN\n    \"qa_people_analytics_a81dc1b5__performancereviews\" AS p\n    ON e.\"employee_id\" = p.\"employee_id\"\n  WHERE\n    e.\"employee_id\" IN (SELECT \"employee_id\" FROM expired_training)\n)\nSELECT\n  \"employee_id\",\n  \"employee_name\",\n  \"risk_flag\",\n  \"performance_score\"\nFROM\n  filtered_employees\nWHERE\n  \"risk_flag\" = 'High'\n  OR \"performance_score\" < 3.2;",
+          "artifact_types": [
+            "table"
+          ],
+          "answer": "Two employees meet the criteria of having high risk_flag or performance score below 3.2, among those with expired training: Samir Khan (E002, risk_flag: Medium, performance_score: 3.1) and Jon Miller (E005, risk_flag: High, performance_score: 2.8).",
+          "status_events": [
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Received the question and conversation context.",
+              "timestamp": "2026-04-30T12:55:42.464973",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Input validation completed.",
+              "timestamp": "2026-04-30T12:55:42.464980",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Classifying the analysis request.",
+              "timestamp": "2026-04-30T12:55:42.465384",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Classified as sql_answerable.",
+              "timestamp": "2026-04-30T12:55:45.005968",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "running",
+              "message": "Retrieving current metadata catalog.",
+              "timestamp": "2026-04-30T12:55:45.008548",
+              "metadata": {}
+            },
+            {
+              "step": "Inspecting schema",
+              "status": "completed",
+              "message": "Schema context is ready.",
+              "timestamp": "2026-04-30T12:55:45.024020",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "running",
+              "message": "Creating a bounded execution plan.",
+              "timestamp": "2026-04-30T12:55:45.024507",
+              "metadata": {}
+            },
+            {
+              "step": "Planning",
+              "status": "completed",
+              "message": "Plan selected sql execution.",
+              "timestamp": "2026-04-30T12:55:47.982714",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 1.",
+              "timestamp": "2026-04-30T12:55:47.983999",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:55:52.064578",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:55:52.065077",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:55:54.660327",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:55:54.661549",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 2 rows.",
+              "timestamp": "2026-04-30T12:55:54.728101",
+              "metadata": {
+                "duration_ms": 65.30583300627768
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:55:54.728949",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "warning",
+              "message": "The query correctly filters by risk_flag='High' OR performance_score<3.2, but ignores the required prior scope (employees with expired training). The result includes only E002 and E005, both of whom are in the expired-training list, but the logic should first restrict to that subset before applying the filter — the plan should join with the prior result set (explicitly or implicitly via a subquery/CTE).",
+              "timestamp": "2026-04-30T12:55:57.950779",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "running",
+              "message": "Generating SQL attempt 2.",
+              "timestamp": "2026-04-30T12:55:57.951654",
+              "metadata": {}
+            },
+            {
+              "step": "Generating query",
+              "status": "completed",
+              "message": "SQL generation finished.",
+              "timestamp": "2026-04-30T12:56:03.235603",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "running",
+              "message": "Validating generated SQL against safety policy.",
+              "timestamp": "2026-04-30T12:56:03.237267",
+              "metadata": {}
+            },
+            {
+              "step": "Validating",
+              "status": "completed",
+              "message": "SQL validation passed.",
+              "timestamp": "2026-04-30T12:56:31.903265",
+              "metadata": {
+                "warnings": []
+              }
+            },
+            {
+              "step": "Executing",
+              "status": "running",
+              "message": "Executing read-only SQL.",
+              "timestamp": "2026-04-30T12:56:31.905876",
+              "metadata": {}
+            },
+            {
+              "step": "Executing",
+              "status": "completed",
+              "message": "SQL returned 2 rows.",
+              "timestamp": "2026-04-30T12:56:31.972337",
+              "metadata": {
+                "duration_ms": 65.3179578948766
+              }
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "running",
+              "message": "Checking whether the result answers the question.",
+              "timestamp": "2026-04-30T12:56:31.973194",
+              "metadata": {}
+            },
+            {
+              "step": "Critiquing answer",
+              "status": "completed",
+              "message": "The executed SQL correctly filters employees with expired training and then further filters those with high risk_flag or performance score below 3.2. The result table includes the required columns (employee_id, employee_name, risk_flag, performance_score) and returns two employees (E002 and E005) who meet the criteria within the expired-training scope, as expected.",
+              "timestamp": "2026-04-30T12:56:33.741437",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "running",
+              "message": "Preparing the final response.",
+              "timestamp": "2026-04-30T12:56:35.790217",
+              "metadata": {}
+            },
+            {
+              "step": "Finalizing",
+              "status": "completed",
+              "message": "Final response is ready.",
+              "timestamp": "2026-04-30T12:56:35.790237",
+              "metadata": {}
+            }
+          ],
+          "intermediate_errors": []
+        }
+      ]
+    }
+  ]
+}

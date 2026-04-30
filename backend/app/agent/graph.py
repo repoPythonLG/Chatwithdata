@@ -20,6 +20,7 @@ from app.agent.prompts import (
     QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
     QUESTION_SUGGESTIONS_SYSTEM,
     SQL_CRITIC_SYSTEM,
+    SQL_QUALITY_AUDIT_SYSTEM,
     SQL_SYSTEM,
 )
 from app.agent.python_guard import PythonGuard
@@ -217,11 +218,6 @@ class DataChatAgent:
             add_event(state, "Planning", "completed", "Plan selected LLM question suggestions.")
             return state
 
-        if state.get("question_type") == "metadata_lookup":
-            state["execution_plan"] = self._metadata_plan()
-            add_event(state, "Planning", "completed", "Plan selected metadata catalog summary.")
-            return state
-
         if state.get("question_type") == "ambiguous":
             state["execution_plan"] = self._clarification_plan(state)
             add_event(
@@ -249,6 +245,15 @@ class DataChatAgent:
         except Exception as exc:
             plan = self._fallback_plan(state["user_question"], state.get("question_type", ""))
             plan["llm_warning"] = str(exc)
+        if (
+            plan.get("tool") == "python"
+            and state.get("question_type") == "requires_chart"
+        ):
+            plan["tool"] = "sql"
+            plan["python_deferred_reason"] = (
+                "Chart-ready tabular analysis is routed through SQL first; Python remains "
+                "available as a repair fallback."
+            )
         state["execution_plan"] = plan
         add_event(
             state, "Planning", "completed", f"Plan selected {plan.get('tool', 'sql')} execution."
@@ -315,6 +320,34 @@ class DataChatAgent:
             critique_errors = self._string_list(critique.get("errors")) or [
                 "SQL critique found that the query may not answer the question."
             ]
+            corrected_sql = str(critique.get("corrected_sql") or "").strip()
+            corrected_validation = critique.get("corrected_sql_validation") or {}
+            if corrected_sql and corrected_validation.get("is_valid"):
+                state["sql_query"] = corrected_sql
+                state["sql_validation"] = {
+                    "is_valid": True,
+                    "errors": [],
+                    "warnings": [
+                        *result.warnings,
+                        *self._string_list(critique.get("warnings")),
+                        *[
+                            f"SQL critic corrected prior query: {error}"
+                            for error in critique_errors
+                        ],
+                    ],
+                    "used_tables": corrected_validation.get("used_tables", []),
+                    "used_columns": corrected_validation.get("used_columns", {}),
+                    "llm_critique": critique,
+                }
+                add_event(
+                    state,
+                    "Validating",
+                    "completed",
+                    "SQL critique supplied a safe corrected query.",
+                    warnings=state["sql_validation"]["warnings"],
+                )
+                return state
+
             state["sql_validation"]["is_valid"] = False
             state["sql_validation"]["errors"] = critique_errors
             state["sql_validation"]["llm_critique"] = critique
@@ -494,18 +527,19 @@ class DataChatAgent:
     async def final_response(self, state: AgentState) -> AgentState:
         artifacts = self._build_artifacts(state)
         source_refs = self._build_source_refs(state)
+        selected_tool = state.get("execution_plan", {}).get("tool")
 
         if (
-            state.get("execution_plan", {}).get("tool") == "metadata"
-            or state.get("question_type") == "metadata_lookup"
+            selected_tool == "metadata"
+            or (not selected_tool and state.get("question_type") == "metadata_lookup")
         ):
             final = await self._build_metadata_response(state)
             artifacts = final.pop("artifacts", artifacts)
             source_refs = final.pop("sources", source_refs)
 
         elif (
-            state.get("execution_plan", {}).get("tool") == "question_suggestions"
-            or state.get("question_type") == "question_suggestions"
+            selected_tool == "question_suggestions"
+            or (not selected_tool and state.get("question_type") == "question_suggestions")
         ):
             final = await self._build_question_suggestions_response(state)
             artifacts = final.pop("artifacts", artifacts)
@@ -649,6 +683,11 @@ class DataChatAgent:
                 "corrected_sql": "",
             }
 
+        if self._json_bool(critique.get("passes"), default=True):
+            audit = await self._audit_sql_quality_before_execution(state)
+            if audit and not self._json_bool(audit.get("passes"), default=True):
+                critique = audit
+
         corrected_sql = str(critique.get("corrected_sql") or "").strip()
         if corrected_sql:
             corrected_validation = self.sql_guard.validate(
@@ -658,6 +697,8 @@ class DataChatAgent:
                 "is_valid": corrected_validation.is_valid,
                 "errors": corrected_validation.errors,
                 "warnings": corrected_validation.warnings,
+                "used_tables": corrected_validation.used_tables,
+                "used_columns": corrected_validation.used_columns,
             }
             if not corrected_validation.is_valid:
                 critique["errors"] = [
@@ -668,6 +709,46 @@ class DataChatAgent:
                     ],
                 ]
         return critique
+
+    async def _audit_sql_quality_before_execution(
+        self, state: AgentState
+    ) -> dict[str, Any] | None:
+        prompt = [
+            {"role": "system", "content": SQL_QUALITY_AUDIT_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": state["user_question"],
+                        "recent_messages": state.get("messages", [])[-8:],
+                        "schema": state.get("schema_context", ""),
+                        "schema_interpretation": state.get("schema_interpretation", {}),
+                        "plan": state.get("execution_plan", {}),
+                        "sql": state.get("sql_query", ""),
+                        "attempt": state.get("sql_attempts", 0),
+                        "repair_feedback": self._sql_repair_feedback(state),
+                    }
+                ),
+            },
+        ]
+        try:
+            audit = await self.llm.complete_json(prompt, max_tokens=1200)
+        except Exception as exc:
+            return {
+                "passes": True,
+                "errors": [],
+                "warnings": [f"SQL quality audit unavailable: {exc}"],
+                "corrected_sql": "",
+            }
+
+        if not isinstance(audit, dict):
+            return {
+                "passes": True,
+                "errors": [],
+                "warnings": ["SQL quality audit returned an unexpected response shape."],
+                "corrected_sql": "",
+            }
+        return audit
 
     @staticmethod
     def _json_bool(value: Any, *, default: bool) -> bool:
@@ -1362,7 +1443,7 @@ class DataChatAgent:
                         "sql_result": state.get("sql_result"),
                         "python_result": state.get("python_result"),
                         "critique": state.get("critique", {}),
-                        "errors": state.get("errors", [])[-5:],
+                        "errors": self._active_errors_for_final(state),
                     }
                 ),
             },
@@ -1386,6 +1467,18 @@ class DataChatAgent:
                 "caveats": caveats,
                 "confidence": state.get("critique", {}).get("confidence", "medium"),
             }
+
+    @staticmethod
+    def _active_errors_for_final(state: AgentState) -> list[str]:
+        critique_passes = DataChatAgent._json_bool(
+            state.get("critique", {}).get("passes"), default=True
+        )
+        if critique_passes and (
+            state.get("sql_result", {}).get("rows")
+            or state.get("python_result", {}).get("ok")
+        ):
+            return []
+        return state.get("errors", [])[-5:]
 
     @staticmethod
     def _fallback_answer(state: AgentState) -> str:

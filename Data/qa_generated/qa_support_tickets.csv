@@ -1,0 +1,7 @@
+ticket_id,created_date,customer_name,priority,status,product_area,resolution_hours
+T-1001,2026-04-01,Blue Falcon,High,Closed,Portal,18
+T-1002,2026-04-02,Desert Pearl,Critical,Open,Data Sync,42
+T-1003,2026-04-05,Maple Works,Medium,Closed,Analytics,26
+T-1004,2026-04-07,Sakura Labs,Low,Closed,Portal,9
+T-1005,2026-04-11,Rhine Parts,High,Open,Data Sync,55
+T-1006,2026-04-14,Blue Falcon,Medium,Closed,Analytics,22

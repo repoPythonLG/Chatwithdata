@@ -141,7 +141,43 @@ class ChatService:
             .limit(12)
         )
         rows = list(reversed(result.scalars().all()))
-        return [{"role": row.role, "content": row.content} for row in rows]
+        return [{"role": row.role, "content": self._context_content(row)} for row in rows]
+
+    @staticmethod
+    def _context_content(row: ChatMessage) -> str:
+        if row.role != "assistant" or not row.payload:
+            return row.content
+
+        payload = row.payload
+        compact: dict[str, Any] = {}
+        if payload.get("sql_query"):
+            compact["sql_query"] = payload["sql_query"]
+        if payload.get("sources"):
+            compact["sources"] = payload["sources"][:8]
+
+        artifacts = []
+        for artifact in payload.get("artifacts", [])[:3]:
+            if artifact.get("type") != "table":
+                continue
+            artifacts.append(
+                {
+                    "title": artifact.get("title"),
+                    "columns": artifact.get("columns", [])[:20],
+                    "rows": artifact.get("rows", [])[:8],
+                    "truncated": artifact.get("truncated", False),
+                }
+            )
+        if artifacts:
+            compact["table_artifacts"] = artifacts
+
+        if not compact:
+            return row.content
+
+        return (
+            f"{row.content}\n\n"
+            "[Prior assistant result context for follow-up resolution]\n"
+            f"{json.dumps(compact, default=str)}"
+        )
 
     async def _store_assistant_message(
         self, conversation_id: str, response: ChatResponse

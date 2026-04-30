@@ -1,0 +1,35 @@
+{
+  "generated_at": "2026-04-30T11:43:05.195Z",
+  "files": [
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/qa_generated/qa_retail_operations.xlsx",
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/qa_generated/qa_manufacturing_quality.xlsx",
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/qa_generated/qa_people_analytics.xlsx",
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/qa_generated/qa_messy_sales_export.xlsx",
+    "/Users/tomman/TIDY/SABIC/GenericChatWithSQLData/Data/qa_generated/qa_support_tickets.csv"
+  ],
+  "expected_hints": {
+    "retail_regions": [
+      "Asia",
+      "Europe",
+      "Middle East",
+      "North America"
+    ],
+    "manufacturing_low_stock_skus": [
+      "SC-100",
+      "MT-510",
+      "PL-330"
+    ],
+    "manufacturing_warehouses": [
+      "Dammam Hub",
+      "Jubail Complex",
+      "Rotterdam Terminal",
+      "Houston Depot"
+    ],
+    "people_overdue_training": [
+      "Samir Khan",
+      "Jon Miller",
+      "Aisha Noor"
+    ],
+    "messy_highest_revenue_account": "Sakura Labs"
+  }
+}
