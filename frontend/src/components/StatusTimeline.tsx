@@ -8,6 +8,7 @@ import {
   XCircle
 } from "lucide-react";
 
+import { useAppStore } from "../store/appStore";
 import type { StatusEvent } from "../types/api";
 import { Badge } from "./ui";
 
@@ -21,6 +22,9 @@ const toneByStatus = {
 
 export function StatusTimeline({ events }: { events: StatusEvent[] }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const responseMode = useAppStore((state) => state.responseMode);
+  if (responseMode === "simple") return null;
+
   const latestByStep = events.reduce<Record<string, StatusEvent>>((acc, event) => {
     acc[event.step] = event;
     return acc;
