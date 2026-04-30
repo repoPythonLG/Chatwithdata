@@ -210,7 +210,9 @@ class DataSourceCatalog:
                     f"- {table.canonical_name} [{table.kind}, rows={table.row_count}]: {columns}"
                 )
                 if table.sample_rows:
-                    lines.append(f"  sample_rows={table.sample_rows[:2]}")
+                    lines.append(
+                        f"  sample_rows={table.sample_rows[: self.settings.metadata_sample_rows]}"
+                    )
         if schema.relationships:
             lines.append("Relationships:")
             for rel in schema.relationships:

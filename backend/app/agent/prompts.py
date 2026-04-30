@@ -14,6 +14,11 @@ recommended analyses, or analysis ideas as question_suggestions.
 Classify standard tabular analysis as sql_answerable, including counts, sums,
 averages/means, minimums, maximums, numeric column summaries, filtering, grouping,
 ranking, and joins. Do not classify these as requires_python.
+If a question could be answered by SQL or Python, choose sql_answerable first; the
+workflow can fall back to Python after SQL validation, execution, or critique fails.
+Use recent_messages to resolve follow-up references. Do not classify a follow-up as
+ambiguous when the immediately preceding conversation identifies the relevant table,
+metric, or result shape.
 Treat broad or exploratory questions about the available data as metadata_lookup, not
 ambiguous. Examples include requests for an overview, schema, table list, columns,
 sample data, data dictionary, source list, "what data is available?", or a short
@@ -33,6 +38,8 @@ Prefer SQL for lookups, filtering, grouping, joins, rankings, counts, sums,
 averages, minimums, maximums, and other standard tabular analysis. Use Python only
 for analyses that SQL cannot reasonably express, such as statistical modeling,
 multi-step custom algorithms, or advanced chart construction.
+If the request asks for details, sorting, top/bottom records, highest/lowest values,
+or more rows from a previous answer, choose SQL first.
 Use question_suggestions when the user asks what questions they can ask, asks for
 example prompts, or asks for recommended analyses. Use metadata for broad exploratory
 questions about available data, tables, columns, schema, samples, or data sources.
@@ -101,6 +108,8 @@ SQL_SYSTEM = """Generate safe read-only DuckDB SQL for a corporate data-chat app
 Return JSON only: {"sql": "...", "reasoning_summary": "..."}.
 Rules:
 - Use only tables and columns from the provided schema.
+- Use the recent conversation to resolve follow-up wording such as "more details",
+  "highest value", "that table", or "order it".
 - Use canonical table and column names exactly.
 - Quote canonical table names and column names with double quotes.
 - Use SELECT/WITH only. No DDL, DML, PRAGMA, ATTACH, COPY, LOAD, INSTALL, file or network functions.
@@ -115,6 +124,28 @@ Rules:
   order_id, inspection_id) from generic numeric summaries unless the user explicitly
   asks for identifiers.
 - If the question cannot be answered, return empty SQL and a concise reason.
+- When repair_feedback is provided, treat the prior SQL as failed. Use the error,
+  critique, and result preview to generate a corrected query instead of repeating it.
+"""
+
+SQL_CRITIC_SYSTEM = """Critique generated DuckDB SQL before execution.
+Return JSON only:
+{
+  "passes": boolean,
+  "errors": ["..."],
+  "warnings": ["..."],
+  "corrected_sql": "optional corrected SQL or empty string"
+}
+Rules:
+- Check whether the SQL directly answers the user's question and recent follow-up context.
+- Check table names, column names, joins, filters, sorting, aggregation, limits, and quoting.
+- Use only the provided schema and sample rows. Do not invent tables or columns.
+- Reject double-escaped identifiers, malformed quoting, wrong table aliases, unsupported
+  filters, missing ORDER BY for highest/lowest/top/bottom questions, and SQL that would
+  return a schema/catalog answer instead of executing the user's requested analysis.
+- corrected_sql must still be read-only SELECT/WITH DuckDB SQL using canonical names.
+- If the SQL is safe and appropriate, set passes=true and corrected_sql="".
+- Do not reveal hidden chain-of-thought.
 """
 
 PYTHON_SYSTEM = """Generate deterministic sandbox-safe Python for local data analysis.
@@ -147,6 +178,14 @@ Return JSON only:
   "repair_tool": "sql" | "python" | null,
   "summary": "short critique summary"
 }
+Pass only when the executed result directly answers the user's question.
+For detail/list/top/bottom/highest/lowest/ranking questions, an empty result normally
+does not pass unless the SQL intentionally searched for missing records and the absence
+itself answers the question.
+If SQL was safe but returned the wrong shape, missing order, missing rows, empty rows,
+or suspicious columns, set needs_repair=true and repair_tool="sql".
+If SQL has already failed repeatedly or the analysis cannot reasonably be expressed in
+SQL, set needs_repair=true and repair_tool="python".
 Do not reveal hidden chain-of-thought.
 """
 

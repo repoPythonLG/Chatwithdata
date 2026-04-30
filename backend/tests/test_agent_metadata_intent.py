@@ -41,3 +41,65 @@ def test_known_table_overview_is_metadata_without_capturing_analytics() -> None:
         "show revenue by customer", table_columns
     )
 
+
+def test_sql_validation_repairs_twice_then_falls_back_to_python() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+
+    state = {"sql_validation": {"is_valid": False}, "sql_attempts": 1}
+    assert agent.route_after_sql_validation(state) == "repair"
+
+    state = {"sql_validation": {"is_valid": False}, "sql_attempts": 2}
+    assert agent.route_after_sql_validation(state) == "repair"
+
+    assert (
+        agent.route_after_sql_validation(
+            {"sql_validation": {"is_valid": False}, "sql_attempts": 3, "python_attempts": 0}
+        )
+        == "python"
+    )
+
+
+def test_sql_execution_falls_back_to_python_after_three_failures() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+
+    assert agent.route_after_sql_execution({"sql_attempts": 1}) == "repair"
+    assert agent.route_after_sql_execution({"sql_attempts": 2}) == "repair"
+    assert agent.route_after_sql_execution({"sql_attempts": 3, "python_attempts": 0}) == "python"
+
+
+def test_critique_routes_to_sql_repair_then_python_when_sql_is_exhausted() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+
+    assert (
+        agent.route_after_critique(
+            {
+                "critique": {"passes": False, "needs_repair": True, "repair_tool": "sql"},
+                "critique_attempts": 1,
+                "sql_attempts": 1,
+            }
+        )
+        == "sql"
+    )
+    assert (
+        agent.route_after_critique(
+            {
+                "critique": {"passes": False, "needs_repair": True, "repair_tool": "sql"},
+                "critique_attempts": 1,
+                "sql_attempts": 3,
+                "python_attempts": 0,
+            }
+        )
+        == "python"
+    )
+
+
+def test_route_after_plan_keeps_standard_tabular_requests_on_sql() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+    state = {
+        "user_question": "provide more details and order by highest value",
+        "question_type": "requires_python",
+        "execution_plan": {"tool": "python"},
+    }
+
+    assert agent.route_after_plan(state) == "sql"
+    assert state["execution_plan"]["tool"] == "sql"

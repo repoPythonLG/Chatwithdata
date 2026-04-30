@@ -17,6 +17,7 @@ from app.agent.prompts import (
     PYTHON_SYSTEM,
     QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
     QUESTION_SUGGESTIONS_SYSTEM,
+    SQL_CRITIC_SYSTEM,
     SQL_SYSTEM,
 )
 from app.agent.python_guard import PythonGuard
@@ -27,6 +28,10 @@ from app.core.config import get_settings
 from app.core.llm import LLMClient
 from app.datasources.catalog import DataSourceCatalog
 from app.datasources.query_engine import QueryEngine
+
+MAX_SQL_ATTEMPTS = 3
+MAX_PYTHON_ATTEMPTS = 3
+MAX_CRITIQUE_ATTEMPTS = 3
 
 
 def status_event(step: str, status: str, message: str, **metadata: Any) -> dict[str, Any]:
@@ -106,12 +111,22 @@ class DataChatAgent:
         graph.add_conditional_edges(
             "validate_sql",
             self.route_after_sql_validation,
-            {"execute": "execute_sql", "repair": "generate_sql", "final": "final_response"},
+            {
+                "execute": "execute_sql",
+                "repair": "generate_sql",
+                "python": "generate_python",
+                "final": "final_response",
+            },
         )
         graph.add_conditional_edges(
             "execute_sql",
             self.route_after_sql_execution,
-            {"critique": "critique_answer", "repair": "generate_sql", "final": "final_response"},
+            {
+                "critique": "critique_answer",
+                "repair": "generate_sql",
+                "python": "generate_python",
+                "final": "final_response",
+            },
         )
         graph.add_edge("generate_python", "validate_python")
         graph.add_conditional_edges(
@@ -247,6 +262,7 @@ class DataChatAgent:
                         "question": state["user_question"],
                         "classification": state.get("classification", {}),
                         "schema": state.get("schema_context", ""),
+                        "recent_messages": state.get("messages", [])[-6:],
                     }
                 ),
             },
@@ -256,6 +272,12 @@ class DataChatAgent:
         except Exception as exc:
             plan = self._fallback_plan(state["user_question"], state.get("question_type", ""))
             plan["llm_warning"] = str(exc)
+        if plan.get("tool") == "python" and self._should_prioritize_sql(state):
+            plan["tool"] = "sql"
+            plan["sql_first_override"] = (
+                "The request looks like standard tabular analysis, so SQL will be "
+                "attempted before Python."
+            )
         state["execution_plan"] = plan
         add_event(
             state, "Planning", "completed", f"Plan selected {plan.get('tool', 'sql')} execution."
@@ -263,6 +285,7 @@ class DataChatAgent:
         return state
 
     async def generate_sql(self, state: AgentState) -> AgentState:
+        repair_feedback = self._sql_repair_feedback(state)
         state["sql_attempts"] = int(state.get("sql_attempts", 0)) + 1
         add_event(
             state,
@@ -270,6 +293,8 @@ class DataChatAgent:
             "running",
             f"Generating SQL attempt {state['sql_attempts']}.",
         )
+        state.pop("sql_validation", None)
+        state.pop("sql_result", None)
         prompt = [
             {"role": "system", "content": SQL_SYSTEM},
             {
@@ -279,6 +304,9 @@ class DataChatAgent:
                         "question": state["user_question"],
                         "schema": state.get("schema_context", ""),
                         "plan": state.get("execution_plan", {}),
+                        "recent_messages": state.get("messages", [])[-8:],
+                        "attempt": state["sql_attempts"],
+                        "repair_feedback": repair_feedback,
                         "previous_errors": state.get("errors", [])[-5:],
                     }
                 ),
@@ -308,7 +336,28 @@ class DataChatAgent:
         if not result.is_valid:
             state["errors"].extend(result.errors)
             add_event(state, "Validating", "error", "SQL validation failed.", errors=result.errors)
+            return state
+
+        critique = await self._critique_sql_before_execution(state)
+        if critique and not self._json_bool(critique.get("passes"), default=True):
+            critique_errors = self._string_list(critique.get("errors")) or [
+                "SQL critique found that the query may not answer the question."
+            ]
+            state["sql_validation"]["is_valid"] = False
+            state["sql_validation"]["errors"] = critique_errors
+            state["sql_validation"]["llm_critique"] = critique
+            state["errors"].extend(critique_errors)
+            add_event(
+                state,
+                "Validating",
+                "error",
+                "SQL critique requested a corrected query.",
+                errors=critique_errors,
+                corrected_sql=critique.get("corrected_sql") or "",
+            )
         else:
+            if critique:
+                state["sql_validation"]["llm_critique"] = critique
             add_event(
                 state, "Validating", "completed", "SQL validation passed.", warnings=result.warnings
             )
@@ -316,6 +365,7 @@ class DataChatAgent:
 
     async def execute_sql(self, state: AgentState) -> AgentState:
         add_event(state, "Executing", "running", "Executing read-only SQL.")
+        state.pop("sql_result", None)
         try:
             result = await self.query_engine.execute_sql(
                 state["sql_query"], state.get("selected_data_sources")
@@ -357,6 +407,9 @@ class DataChatAgent:
                         "question": state["user_question"],
                         "schema": state.get("schema_context", ""),
                         "plan": state.get("execution_plan", {}),
+                        "recent_messages": state.get("messages", [])[-8:],
+                        "sql_attempts": state.get("sql_attempts", 0),
+                        "sql_repair_feedback": self._sql_repair_feedback(state),
                         "previous_errors": state.get("errors", [])[-5:],
                     }
                 ),
@@ -432,10 +485,16 @@ class DataChatAgent:
                     {
                         "question": state["user_question"],
                         "plan": state.get("execution_plan", {}),
+                        "schema": state.get("schema_context", ""),
+                        "recent_messages": state.get("messages", [])[-8:],
                         "sql": state.get("sql_query"),
+                        "sql_validation": state.get("sql_validation"),
+                        "sql_attempts": state.get("sql_attempts", 0),
+                        "sql_result_summary": self._sql_result_summary(state),
                         "sql_result_preview": state.get("sql_result", {}).get("rows", [])[:10],
                         "python_code": state.get("python_code"),
                         "python_result": state.get("python_result"),
+                        "python_attempts": state.get("python_attempts", 0),
                         "errors": state.get("errors", [])[-5:],
                     }
                 ),
@@ -496,7 +555,7 @@ class DataChatAgent:
         add_event(state, "Finalizing", "running", "Preparing the final response.")
         final.update(
             {
-                "sql_query": state.get("sql_query") or None,
+                "sql_query": self._exposed_sql_query(state),
                 "python_code": self._exposed_python_code(state),
                 "artifacts": artifacts,
                 "sources": source_refs,
@@ -512,52 +571,232 @@ class DataChatAgent:
         tool = state.get("execution_plan", {}).get("tool", "sql")
         if tool in {"question_suggestions", "metadata"}:
             return "final"
-        if tool == "python" or state.get("question_type") in {"requires_python", "requires_chart"}:
-            return "python"
         if (
             tool in {"clarify", "none"}
             or state.get("question_type") in {"ambiguous", "impossible"}
         ):
             return "final"
+        if self._should_prioritize_sql(state):
+            state.setdefault("execution_plan", {})["tool"] = "sql"
+            return "sql"
+        if tool == "python" or state.get("question_type") in {"requires_python", "requires_chart"}:
+            return "python"
         return "sql"
 
     def route_after_sql_validation(self, state: AgentState) -> str:
         if state.get("sql_validation", {}).get("is_valid"):
             return "execute"
-        if int(state.get("sql_attempts", 0)) < 2:
+        if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
             return "repair"
+        if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+            return "python"
         return "final"
 
     def route_after_sql_execution(self, state: AgentState) -> str:
         if state.get("sql_result"):
             return "critique"
-        if int(state.get("sql_attempts", 0)) < 2:
+        if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
             return "repair"
+        if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+            return "python"
         return "final"
 
     def route_after_python_validation(self, state: AgentState) -> str:
         if state.get("python_validation", {}).get("is_valid"):
             return "execute"
-        if int(state.get("python_attempts", 0)) < 3:
+        if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
             return "repair"
         return "final"
 
     def route_after_python_execution(self, state: AgentState) -> str:
         if state.get("python_result", {}).get("ok"):
             return "critique"
-        if int(state.get("python_attempts", 0)) < 3:
+        if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
             return "repair"
         return "final"
 
     def route_after_critique(self, state: AgentState) -> str:
         critique = state.get("critique", {})
-        if (
-            critique.get("needs_repair")
-            and int(state.get("critique_attempts", 0)) < 2
-            and critique.get("repair_tool") in {"sql", "python"}
-        ):
-            return critique["repair_tool"]
+        needs_repair = self._json_bool(
+            critique.get("needs_repair"), default=False
+        ) or not self._json_bool(critique.get("passes"), default=True)
+        if needs_repair and int(state.get("critique_attempts", 0)) < MAX_CRITIQUE_ATTEMPTS:
+            repair_tool = critique.get("repair_tool")
+            if repair_tool == "sql":
+                if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+                    return "sql"
+                if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+                    return "python"
+            if repair_tool == "python":
+                if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+                    return "python"
+                if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+                    return "sql"
+            if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+                return "sql"
+            if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+                return "python"
         return "final"
+
+    async def _critique_sql_before_execution(self, state: AgentState) -> dict[str, Any] | None:
+        prompt = [
+            {"role": "system", "content": SQL_CRITIC_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": state["user_question"],
+                        "recent_messages": state.get("messages", [])[-8:],
+                        "schema": state.get("schema_context", ""),
+                        "plan": state.get("execution_plan", {}),
+                        "sql": state.get("sql_query", ""),
+                        "attempt": state.get("sql_attempts", 0),
+                        "repair_feedback": self._sql_repair_feedback(state),
+                    }
+                ),
+            },
+        ]
+        try:
+            critique = await self.llm.complete_json(prompt, max_tokens=1200)
+        except Exception as exc:
+            return {
+                "passes": True,
+                "errors": [],
+                "warnings": [f"SQL critique unavailable: {exc}"],
+                "corrected_sql": "",
+            }
+
+        if not isinstance(critique, dict):
+            return {
+                "passes": True,
+                "errors": [],
+                "warnings": ["SQL critique returned an unexpected response shape."],
+                "corrected_sql": "",
+            }
+
+        corrected_sql = str(critique.get("corrected_sql") or "").strip()
+        if corrected_sql:
+            corrected_validation = self.sql_guard.validate(
+                corrected_sql, state.get("table_columns", {})
+            )
+            critique["corrected_sql_validation"] = {
+                "is_valid": corrected_validation.is_valid,
+                "errors": corrected_validation.errors,
+                "warnings": corrected_validation.warnings,
+            }
+            if not corrected_validation.is_valid:
+                critique["errors"] = [
+                    *self._string_list(critique.get("errors")),
+                    *[
+                        f"Suggested correction is invalid: {error}"
+                        for error in corrected_validation.errors
+                    ],
+                ]
+        return critique
+
+    @staticmethod
+    def _json_bool(value: Any, *, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "yes", "1"}:
+                return True
+            if normalized in {"false", "no", "0"}:
+                return False
+        return default
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        items = value if isinstance(value, list) else [value]
+        return [str(item).strip() for item in items if str(item).strip()]
+
+    @staticmethod
+    def _sql_result_summary(state: AgentState) -> dict[str, Any] | None:
+        result = state.get("sql_result")
+        if not result:
+            return None
+        return {
+            "columns": result.get("columns", []),
+            "row_count": result.get("row_count", 0),
+            "truncated": result.get("truncated", False),
+            "duration_ms": result.get("duration_ms"),
+        }
+
+    def _sql_repair_feedback(self, state: AgentState) -> dict[str, Any] | None:
+        has_feedback = any(
+            [
+                state.get("sql_query"),
+                state.get("sql_validation"),
+                state.get("sql_result"),
+                state.get("critique"),
+                state.get("errors"),
+            ]
+        )
+        if not has_feedback:
+            return None
+        return {
+            "failed_or_prior_sql": state.get("sql_query"),
+            "sql_validation": state.get("sql_validation"),
+            "sql_result_summary": self._sql_result_summary(state),
+            "sql_result_preview": state.get("sql_result", {}).get("rows", [])[:5],
+            "critique": state.get("critique"),
+            "recent_errors": state.get("errors", [])[-8:],
+        }
+
+    @staticmethod
+    def _should_prioritize_sql(state: AgentState) -> bool:
+        text = DataChatAgent._normalize_text(state.get("user_question", ""))
+        if not text:
+            return False
+        python_only_terms = (
+            "anomaly",
+            "correlation",
+            "forecast",
+            "linear regression",
+            "machine learning",
+            "model",
+            "outlier",
+            "predict",
+            "regression",
+            "statistical",
+        )
+        chart_terms = ("chart", "plot", "visual", "visualize", "graph")
+        if any(term in text for term in python_only_terms + chart_terms):
+            return False
+        sql_first_terms = (
+            "average",
+            "avg",
+            "bottom",
+            "count",
+            "detail",
+            "details",
+            "filter",
+            "group",
+            "highest",
+            "list",
+            "lowest",
+            "max",
+            "maximum",
+            "mean",
+            "min",
+            "minimum",
+            "more",
+            "order",
+            "rank",
+            "show",
+            "sort",
+            "sum",
+            "top",
+            "total",
+            "value",
+            "where",
+        )
+        if any(term in text.split() for term in sql_first_terms):
+            return True
+        return DataChatAgent._looks_like_analytical_request(text)
 
     @staticmethod
     def _fallback_classification(question: str) -> dict[str, Any]:
@@ -1425,7 +1664,9 @@ class DataChatAgent:
 
     def _build_artifacts(self, state: AgentState) -> list[dict[str, Any]]:
         artifacts: list[dict[str, Any]] = []
-        if state.get("sql_result", {}).get("rows"):
+        python_result = state.get("python_result", {})
+        prefer_python = bool(python_result.get("ok"))
+        if not prefer_python and state.get("sql_result", {}).get("rows"):
             artifacts.append(
                 {
                     "type": "table",
@@ -1437,7 +1678,6 @@ class DataChatAgent:
                     "truncated": state["sql_result"].get("truncated", False),
                 }
             )
-        python_result = state.get("python_result", {})
         if python_result.get("result_table"):
             rows = python_result["result_table"]
             columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
@@ -1458,10 +1698,20 @@ class DataChatAgent:
 
     @staticmethod
     def _build_source_refs(state: AgentState) -> list[dict[str, Any]]:
+        if state.get("python_result", {}).get("ok"):
+            return []
         validation = state.get("sql_validation", {})
         used_tables = validation.get("used_tables") or []
         used_columns = validation.get("used_columns") or {}
         return [{"table": table, "columns": used_columns.get(table, [])} for table in used_tables]
+
+    @staticmethod
+    def _exposed_sql_query(state: AgentState) -> str | None:
+        if state.get("python_result", {}).get("ok"):
+            return None
+        if not state.get("sql_result"):
+            return None
+        return state.get("sql_query") or None
 
     @staticmethod
     def _exposed_python_code(state: AgentState) -> str | None:
