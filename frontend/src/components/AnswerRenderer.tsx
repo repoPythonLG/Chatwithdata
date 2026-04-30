@@ -1,4 +1,5 @@
 import { Code2, Database, MessageSquareText, ShieldAlert } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { useAppStore } from "../store/appStore";
 import type { ChatResponse } from "../types/api";
@@ -79,12 +80,19 @@ function FormattedAnswer({ text }: { text: string }) {
   return (
     <div className="space-y-4 leading-7 text-ink-900 dark:text-ink-50">
       {blocks.map((block, index) =>
-        block.type === "list" ? (
+        block.type === "heading" ? (
+          <h3
+            className="font-display text-xl font-bold tracking-tight text-ink-950 dark:text-white"
+            key={index}
+          >
+            {renderInlineMarkdown(block.text)}
+          </h3>
+        ) : block.type === "list" ? (
           <ul className="space-y-2" key={index}>
             {block.items.map((item, itemIndex) => (
               <li className="flex gap-3" key={`${index}-${itemIndex}`}>
                 <span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-harbor-500" />
-                <span>{item}</span>
+                <span>{renderInlineMarkdown(item)}</span>
               </li>
             ))}
           </ul>
@@ -92,7 +100,7 @@ function FormattedAnswer({ text }: { text: string }) {
           <AnswerTable block={block} key={index} />
         ) : (
           <p className={index === 0 ? "text-lg font-semibold" : ""} key={index}>
-            {block.text}
+            {renderInlineMarkdown(block.text)}
           </p>
         )
       )}
@@ -101,6 +109,7 @@ function FormattedAnswer({ text }: { text: string }) {
 }
 
 type AnswerBlock =
+  | { type: "heading"; text: string }
   | { type: "paragraph"; text: string }
   | { type: "list"; items: string[] }
   | { type: "table"; headers: string[]; rows: string[][] };
@@ -145,14 +154,26 @@ function toBlocks(text: string): AnswerBlock[] {
       flushList();
       return;
     }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushTable();
+      flushList();
+      blocks.push({ type: "heading", text: heading[2].trim() });
+      return;
+    }
     if (isMarkdownTableRow(line)) {
       flushList();
       pendingTableRows.push(parseMarkdownTableRow(line));
       return;
     }
-    if (line.startsWith("- ")) {
+    if (/^[-*]\s+/.test(line)) {
       flushTable();
-      pendingList.push(line.slice(2));
+      pendingList.push(line.replace(/^[-*]\s+/, ""));
+      return;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      flushTable();
+      pendingList.push(line.replace(/^\d+\.\s+/, ""));
       return;
     }
     flushTable();
@@ -174,7 +195,7 @@ function AnswerTable({ block }: { block: Extract<AnswerBlock, { type: "table" }>
             <tr>
               {block.headers.map((header, index) => (
                 <th className="px-4 py-3 font-semibold" key={`${header}-${index}`}>
-                  {header}
+                  {renderInlineMarkdown(header)}
                 </th>
               ))}
             </tr>
@@ -184,7 +205,7 @@ function AnswerTable({ block }: { block: Extract<AnswerBlock, { type: "table" }>
               <tr className="border-t border-ink-100 dark:border-white/10" key={rowIndex}>
                 {block.headers.map((_, columnIndex) => (
                   <td className="whitespace-nowrap px-4 py-3" key={columnIndex}>
-                    {row[columnIndex] ?? ""}
+                    {renderInlineMarkdown(row[columnIndex] ?? "")}
                   </td>
                 ))}
               </tr>
@@ -214,6 +235,62 @@ function isSeparatorRow(row: string[]) {
 
 function normalizeRow(row: string[]) {
   return row.map((cell) => cell.trim());
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index));
+    }
+
+    const token = match[0];
+    const key = `${match.index}-${token}`;
+    if (token.startsWith("**") && token.endsWith("**")) {
+      nodes.push(
+        <strong className="font-bold text-ink-950 dark:text-white" key={key}>
+          {token.slice(2, -2)}
+        </strong>
+      );
+    } else if (token.startsWith("`") && token.endsWith("`")) {
+      nodes.push(
+        <code
+          className="rounded-md bg-ink-100 px-1.5 py-0.5 font-mono text-sm text-ink-900 dark:bg-white/10 dark:text-white"
+          key={key}
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    } else {
+      const linkMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (linkMatch) {
+        nodes.push(
+          <a
+            className="font-semibold text-harbor-700 underline decoration-harbor-300 underline-offset-4 transition hover:text-harbor-900 dark:text-harbor-300 dark:hover:text-harbor-100"
+            href={linkMatch[2]}
+            key={key}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {linkMatch[1]}
+          </a>
+        );
+      } else {
+        nodes.push(token);
+      }
+    }
+
+    cursor = pattern.lastIndex;
+  }
+
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor));
+  }
+  return nodes;
 }
 
 function CodeBlock({ title, code }: { title: string; code: string }) {
