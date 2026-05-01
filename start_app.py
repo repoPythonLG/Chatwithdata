@@ -122,6 +122,65 @@ def is_running(pid: int) -> bool:
     return True
 
 
+def process_command_line(pid: int) -> str:
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.exists():
+        try:
+            raw = proc_cmdline.read_bytes()
+            return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+        except Exception:
+            return ""
+    try:
+        return subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def is_our_supervisor_pid(pid: int) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return False
+    return "start_app.py" in process_command_line(pid)
+
+
+def is_our_child_pid(pid: int) -> bool:
+    command = process_command_line(pid).lower()
+    if not command:
+        return False
+    return (
+        ("uvicorn" in command and "app.main:app" in command)
+        or ("vite" in command and "node" in command)
+        or ("vite" in command and "npm" in command)
+    )
+
+
+def terminate_process_group_by_pid(pid: int, name: str) -> None:
+    if not is_running(pid):
+        return
+    print(f"Stopping stale {name} process group {pid}...", flush=True)
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except Exception as exc:
+        print(f"Could not stop stale {name} PID {pid}: {exc}", flush=True)
+        return
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not is_running(pid):
+            return
+        time.sleep(0.5)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except Exception as exc:
+        print(f"Could not kill stale {name} PID {pid}: {exc}", flush=True)
+
+
 def read_pid_file(pid_file: Path) -> dict[str, Any] | None:
     if not pid_file.exists():
         return None
@@ -138,11 +197,20 @@ def ensure_not_running(pid_file: Path) -> None:
     if not data:
         return
     supervisor_pid = int(data.get("supervisor_pid") or 0)
-    if is_running(supervisor_pid):
+    if is_running(supervisor_pid) and is_our_supervisor_pid(supervisor_pid):
         raise SystemExit(
             f"Chat with Data is already running under supervisor PID {supervisor_pid}. "
             "Use ./stop.sh first."
         )
+    if is_running(supervisor_pid):
+        print(
+            f"Removing stale PID file; PID {supervisor_pid} is not a Chat with Data supervisor.",
+            flush=True,
+        )
+    for name, key in (("frontend", "frontend_pid"), ("backend", "backend_pid")):
+        child_pid = int(data.get(key) or 0)
+        if is_running(child_pid) and is_our_child_pid(child_pid):
+            terminate_process_group_by_pid(child_pid, name)
     pid_file.unlink(missing_ok=True)
 
 

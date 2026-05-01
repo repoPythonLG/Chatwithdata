@@ -48,6 +48,43 @@ def is_running(pid: int) -> bool:
     return True
 
 
+def process_command_line(pid: int) -> str:
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.exists():
+        try:
+            raw = proc_cmdline.read_bytes()
+            return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+        except Exception:
+            return ""
+    try:
+        import subprocess
+
+        return subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def is_start_app_supervisor(pid: int) -> bool:
+    if pid <= 0 or pid == os.getpid():
+        return False
+    return "start_app.py" in process_command_line(pid)
+
+
+def is_chat_child(pid: int) -> bool:
+    command = process_command_line(pid).lower()
+    if not command:
+        return False
+    return (
+        ("uvicorn" in command and "app.main:app" in command)
+        or ("vite" in command and "node" in command)
+        or ("vite" in command and "npm" in command)
+    )
+
+
 def wait_until_stopped(pid: int, timeout: float = 15.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -99,14 +136,18 @@ supervisor_pid = int(data.get("supervisor_pid") or 0)
 backend_pid = int(data.get("backend_pid") or 0)
 frontend_pid = int(data.get("frontend_pid") or 0)
 
-if supervisor_pid and is_running(supervisor_pid):
+if supervisor_pid and is_running(supervisor_pid) and is_start_app_supervisor(supervisor_pid):
     print(f"Stopping supervisor PID {supervisor_pid}...")
     terminate_pid(supervisor_pid)
+elif supervisor_pid and is_running(supervisor_pid):
+    print(f"Skipping PID {supervisor_pid}; it is not a Chat with Data supervisor.")
 
 for name, pid in (("frontend", frontend_pid), ("backend", backend_pid)):
-    if pid and is_running(pid):
+    if pid and is_running(pid) and is_chat_child(pid):
         print(f"Stopping {name} process group {pid}...")
         terminate_pid(pid, process_group=True)
+    elif pid and is_running(pid):
+        print(f"Skipping {name} PID {pid}; it does not look like a Chat with Data process.")
 
 pid_file.unlink(missing_ok=True)
 print("Chat with Data stopped.")
