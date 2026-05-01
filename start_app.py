@@ -256,7 +256,12 @@ def terminate_process_group(process: subprocess.Popen[Any], name: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start Chat with Data for Cloudera.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="Path to JSON config file.")
-    args = parser.parse_args()
+    args, unknown_args = parser.parse_known_args()
+    if unknown_args:
+        print(
+            "Ignoring runtime-injected arguments: " + " ".join(unknown_args),
+            flush=True,
+        )
 
     config_path = Path(args.config).resolve()
     config = load_config(config_path)
