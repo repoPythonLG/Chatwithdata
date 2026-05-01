@@ -46,6 +46,13 @@ Rules:
 - Generated Python must use only the approved query(sql) interface; it must not read or
   write files, use network, subprocess, shell, sockets, environment variables, or
   unsafe imports.
+- For Python chart actions, use the approved analytics runtime: pd, np, duckdb,
+  math, statistics, json, query(sql), tables, and Plotly imports. Prefer assigning
+  chart to a Plotly figure or Plotly-compatible dict; do not hand-build JSON chart
+  strings through concatenation.
+- If a prior SQL action succeeded, sql_result and sql_result_df are available inside
+  Python as safe in-memory context. Use sql_result_df for chart-only follow-ups when
+  it already contains the needed grouped rows.
 - If previous review, execution, or verification failed, use the supplied feedback to
   choose a corrected action instead of repeating the same failed attempt.
 - Write all user-facing text in English only unless the user explicitly requests
@@ -732,10 +739,16 @@ Return JSON only: {"code": "...", "reasoning_summary": "..."}.
 Available runtime:
 - query(sql: str) -> pandas DataFrame over the approved DuckDB canonical tables.
 - tables is a list of {"name": table_name, "columns": [...]}.
-- pd, np, duckdb, math, statistics are already available.
+- sql_result is the previous successful SQL result dict when available.
+- sql_result_df is a pandas DataFrame built from previous successful SQL rows when
+  available.
+- pd, np, duckdb, math, statistics, json are already available.
+- Plotly may be imported, for example import plotly.express as px.
 Rules:
 - Prefer SQL through query(sql) for aggregations, joins, filtering, sorting, and
   numeric summaries. Do not use Python for work that a single SQL query can answer.
+- If sql_result_df is non-empty and already contains the grouped rows needed for a
+  chart-only follow-up, use it rather than re-querying.
 - Use the provided tables list to discover available canonical table names and columns.
 - Use schema_interpretation when present as the schema-grounded interpretation of
   ambiguous or typo-heavy wording.
@@ -747,7 +760,8 @@ Rules:
 - Set answer to a concise English string. Do not include garbled encoding, replacement
   characters, or non-English fragments unless the user explicitly asks for another language.
 - Optionally set result_table to a pandas DataFrame or records list.
-- Optionally set chart to a Plotly figure or Plotly-compatible dict.
+- For chart requests, set chart to a Plotly figure or Plotly-compatible dict. Do not
+  build chart JSON with string concatenation; use Plotly objects, dicts, or json.
 """
 
 CRITIC_SYSTEM = """You critique a completed data-analysis attempt.

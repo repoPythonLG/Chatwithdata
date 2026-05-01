@@ -32,12 +32,13 @@ class PythonSandbox:
         self,
         code: str,
         selected_source_ids: list[str] | None = None,
+        context: dict[str, Any] | None = None,
     ) -> PythonExecutionResult:
         run_dir = self.settings.python_work_dir / str(uuid.uuid4())
         run_dir.mkdir(parents=True, exist_ok=True)
         try:
             tables = await self.query_engine.materialize_for_python(run_dir, selected_source_ids)
-            payload = {"code": code, "tables": tables}
+            payload = {"code": code, "tables": tables, "context": context or {}}
             worker = Path(__file__).with_name("sandbox_worker.py")
             process = await asyncio.create_subprocess_exec(
                 sys.executable,

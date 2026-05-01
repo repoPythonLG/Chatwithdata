@@ -52,3 +52,23 @@ def test_python_guard_rejects_raw_sql_text():
 
     assert not result.is_valid
     assert any("returned raw SQL" in error for error in result.errors)
+
+
+def test_python_guard_allows_chart_json_and_pandas_transformations():
+    guard = PythonGuard(max_chars=2000)
+    result = guard.validate(
+        """
+import json
+
+df = sql_result_df.rename(columns={"old": "new"}).replace({"n/a": None})
+chart = {
+    "data": [{"type": "bar", "x": df["new"].tolist(), "y": df["value"].tolist()}],
+    "layout": {"title": json.dumps({"text": "Example"})}
+}
+answer = "Created a chart."
+"""
+    )
+
+    assert result.is_valid
+    assert not result.errors
+    assert not result.warnings

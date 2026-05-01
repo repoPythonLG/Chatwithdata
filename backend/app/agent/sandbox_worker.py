@@ -14,7 +14,16 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-ALLOWED_IMPORT_ROOTS = {"datetime", "duckdb", "math", "numpy", "pandas", "plotly", "statistics"}
+ALLOWED_IMPORT_ROOTS = {
+    "datetime",
+    "duckdb",
+    "json",
+    "math",
+    "numpy",
+    "pandas",
+    "plotly",
+    "statistics",
+}
 
 
 def json_safe(value: Any) -> Any:
@@ -27,6 +36,10 @@ def json_safe(value: Any) -> Any:
         pass
     if isinstance(value, (datetime, date, pd.Timestamp)):
         return value.isoformat()
+    if isinstance(value, np.ndarray):
+        return json_safe(value.tolist())
+    if isinstance(value, pd.Index):
+        return json_safe(value.tolist())
     if hasattr(value, "item"):
         try:
             return value.item()
@@ -46,10 +59,15 @@ def json_safe(value: Any) -> Any:
 def safe_import(
     name: str, globals_: dict | None = None, locals_: dict | None = None, fromlist=(), level=0
 ):
+    if level != 0:
+        raise ImportError("Relative imports are not allowed in sandbox.")
     root = name.split(".")[0]
     if root not in ALLOWED_IMPORT_ROOTS:
         raise ImportError(f"Import is not allowed in sandbox: {name}")
-    return importlib.import_module(name)
+    module = importlib.import_module(name)
+    if fromlist:
+        return module
+    return importlib.import_module(root)
 
 
 def build_builtins() -> dict[str, Any]:
@@ -85,10 +103,18 @@ def build_builtins() -> dict[str, Any]:
     return builtins
 
 
+def first_defined(name: str, *scopes: dict[str, Any]) -> Any:
+    for scope in scopes:
+        if name in scope and scope[name] is not None:
+            return scope[name]
+    return None
+
+
 def main() -> None:
     payload = json.loads(sys.stdin.read())
     tables = payload["tables"]
     code = payload["code"]
+    context = payload.get("context") or {}
 
     conn = duckdb.connect(database=":memory:", read_only=False)
     try:
@@ -118,14 +144,20 @@ def main() -> None:
             return conn.execute(sql).df()
 
         stdout = io.StringIO()
+        sql_result = context.get("sql_result") or {}
+        sql_result_df = pd.DataFrame(sql_result.get("rows") or [])
+
         globals_dict: dict[str, Any] = {
             "__builtins__": build_builtins(),
             "pd": pd,
             "np": np,
             "duckdb": duckdb,
+            "json": json,
             "math": math,
             "statistics": statistics,
             "query": query,
+            "sql_result": sql_result,
+            "sql_result_df": sql_result_df,
             "tables": [
                 {key: value for key, value in table.items() if key != "path"} for table in tables
             ],
@@ -134,14 +166,11 @@ def main() -> None:
         with contextlib.redirect_stdout(stdout):
             exec(compile(code, "<sandbox>", "exec"), globals_dict, locals_dict)
 
-        answer = locals_dict.get("answer") or globals_dict.get("answer")
-        result_table = (
-            locals_dict.get("result_table")
-            or globals_dict.get("result_table")
-            or locals_dict.get("result")
-            or globals_dict.get("result")
-        )
-        chart = locals_dict.get("chart") or globals_dict.get("chart")
+        answer = first_defined("answer", locals_dict, globals_dict)
+        result_table = first_defined("result_table", locals_dict, globals_dict)
+        if result_table is None:
+            result_table = first_defined("result", locals_dict, globals_dict)
+        chart = first_defined("chart", locals_dict, globals_dict)
 
         chart_spec = None
         if chart is not None:

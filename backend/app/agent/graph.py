@@ -1164,7 +1164,9 @@ class DataChatAgent:
     async def execute_python(self, state: AgentState) -> AgentState:
         add_event(state, "Executing", "running", "Running Python in a constrained sandbox.")
         result = await self.python_sandbox.execute(
-            state.get("python_code", ""), state.get("selected_data_sources")
+            state.get("python_code", ""),
+            state.get("selected_data_sources"),
+            context={"sql_result": state.get("sql_result") or {}},
         )
         state["python_result"] = {
             "ok": result.ok,

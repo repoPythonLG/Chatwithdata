@@ -15,6 +15,7 @@ class PythonGuard:
     allowed_import_roots = {
         "datetime",
         "duckdb",
+        "json",
         "math",
         "numpy",
         "pandas",
@@ -71,8 +72,6 @@ class PythonGuard:
         "popen",
         "putenv",
         "remove",
-        "rename",
-        "replace",
         "rmdir",
         "rmtree",
         "send",
@@ -122,7 +121,7 @@ class PythonGuard:
             if isinstance(node, ast.Name) and node.id.startswith("__"):
                 errors.append(f"Dunder name access is not allowed: {node.id}")
 
-        if "query(" not in code:
+        if "query(" not in code and "sql_result_df" not in code:
             warnings.append("Code should usually use the provided query(sql) function.")
 
         return PythonValidationResult(not errors, sorted(set(errors)), warnings)
