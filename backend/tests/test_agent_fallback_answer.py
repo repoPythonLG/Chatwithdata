@@ -41,8 +41,14 @@ def test_fallback_answer_includes_detail_columns_when_no_aggregate_metric_exists
 
 
 def test_bounded_confidence_never_exceeds_failed_critique():
-    assert DataChatAgent._bounded_confidence("high", {"passes": False, "confidence": "high"}) == "low"
+    assert (
+        DataChatAgent._bounded_confidence("high", {"passes": False, "confidence": "high"})
+        == "low"
+    )
 
 
 def test_bounded_confidence_never_exceeds_critique_confidence():
-    assert DataChatAgent._bounded_confidence("high", {"passes": True, "confidence": "medium"}) == "medium"
+    assert (
+        DataChatAgent._bounded_confidence("high", {"passes": True, "confidence": "medium"})
+        == "medium"
+    )

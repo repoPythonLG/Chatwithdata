@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from app.db.models import DataSource, TableMetadata
 
 
-def table_alias_candidates(table: "TableMetadata", source: "DataSource") -> list[str]:
+def table_alias_candidates(table: TableMetadata, source: DataSource) -> list[str]:
     """Return user-friendly query aliases that are safe only when globally unique."""
 
     source_name = normalize_identifier(source.name, fallback="source")
@@ -28,7 +28,7 @@ def table_alias_candidates(table: "TableMetadata", source: "DataSource") -> list
 
 
 def unique_table_aliases(
-    tables: list[tuple["TableMetadata", "DataSource"]],
+    tables: list[tuple[TableMetadata, DataSource]],
 ) -> dict[str, list[str]]:
     """Map canonical table names to non-conflicting friendly aliases."""
 

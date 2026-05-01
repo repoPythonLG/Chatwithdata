@@ -130,3 +130,62 @@ def test_invalid_llm_schema_interpretation_stays_ambiguous() -> None:
 
     assert state["question_type"] == "ambiguous"
     assert state["classification"]["clarification_question"] == "Which field should I use?"
+
+
+def test_react_action_application_maps_sql_and_counts_attempt() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+    state = {"sql_attempts": 0}
+    action = DataChatAgent._normalize_react_action(
+        {
+            "thought_summary": "Use SQL for a grouped count.",
+            "phase": "Generate query",
+            "action": "sql_query",
+            "action_input": {"sql": 'SELECT COUNT(*) AS row_count FROM "orders"'},
+            "expected_output": "row_count",
+        }
+    )
+
+    agent._apply_react_action_to_state(state, action, increment_attempt=True)
+
+    assert state["sql_attempts"] == 1
+    assert state["sql_query"] == 'SELECT COUNT(*) AS row_count FROM "orders"'
+    assert state["execution_plan"]["tool"] == "sql"
+    assert state["current_action"]["action"] == "sql_query"
+
+
+def test_react_review_route_retries_when_review_rejects_action() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+    state = {
+        "react_rounds": 1,
+        "sql_attempts": 0,
+        "python_attempts": 0,
+        "action_review": {"approved": False, "issues": ["Wrong tool"]},
+        "status_events": [],
+    }
+
+    assert agent.route_after_action_review(state) == "retry"
+    assert state["status_events"][-1]["step"] == "Retrying"
+
+
+def test_react_verification_maps_sql_repair_to_sql_action() -> None:
+    agent = DataChatAgent.__new__(DataChatAgent)
+
+    verification = agent._verification_from_critique(
+        {
+            "passes": False,
+            "confidence": "low",
+            "summary": "SQL missed a requested metric.",
+            "caveats": ["Missing metric"],
+            "needs_repair": True,
+            "repair_tool": "sql",
+        }
+    )
+
+    assert verification == {
+        "passes": False,
+        "confidence": "low",
+        "summary": "SQL missed a requested metric.",
+        "caveats": ["Missing metric"],
+        "needs_repair": True,
+        "repair_action": "sql_query",
+    }

@@ -9,6 +9,8 @@ from langgraph.graph import END, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.prompts import (
+    ACTION_REVIEW_SYSTEM,
+    ACTION_VERIFY_SYSTEM,
     AMBIGUITY_RESOLVER_SYSTEM,
     CLASSIFIER_SYSTEM,
     CRITIC_SYSTEM,
@@ -20,6 +22,7 @@ from app.agent.prompts import (
     PYTHON_SYSTEM,
     QUESTION_SUGGESTIONS_CRITIC_SYSTEM,
     QUESTION_SUGGESTIONS_SYSTEM,
+    REACT_THINKING_SYSTEM,
     SQL_CRITIC_SYSTEM,
     SQL_QUALITY_AUDIT_SYSTEM,
     SQL_SYSTEM,
@@ -37,6 +40,16 @@ from app.datasources.query_engine import QueryEngine
 MAX_SQL_ATTEMPTS = 3
 MAX_PYTHON_ATTEMPTS = 3
 MAX_CRITIQUE_ATTEMPTS = 3
+MAX_REACT_ROUNDS = 8
+
+ALLOWED_REACT_ACTIONS = {
+    "sql_query",
+    "python_analysis",
+    "metadata_answer",
+    "question_suggestions",
+    "ask_clarification",
+    "direct_response",
+}
 
 
 def status_event(step: str, status: str, message: str, **metadata: Any) -> dict[str, Any]:
@@ -82,75 +95,726 @@ class DataChatAgent:
         state.setdefault("sql_attempts", 0)
         state.setdefault("python_attempts", 0)
         state.setdefault("critique_attempts", 0)
+        state.setdefault("react_rounds", 0)
+        state.setdefault("react_history", [])
         return state
 
     def _build_graph(self):
         graph = StateGraph(AgentState)
         graph.add_node("receive_question", self.receive_question)
-        graph.add_node("classify_question", self.classify_question)
         graph.add_node("inspect_schema", self.inspect_schema)
-        graph.add_node("plan_answer", self.plan_answer)
-        graph.add_node("generate_sql", self.generate_sql)
-        graph.add_node("validate_sql", self.validate_sql)
-        graph.add_node("execute_sql", self.execute_sql)
-        graph.add_node("generate_python", self.generate_python)
-        graph.add_node("validate_python", self.validate_python)
-        graph.add_node("execute_python", self.execute_python)
-        graph.add_node("critique_answer", self.critique_answer)
+        graph.add_node("thinking", self.thinking)
+        graph.add_node("review_action", self.review_action)
+        graph.add_node("act_tool", self.act_tool)
+        graph.add_node("verify_action", self.verify_action)
         graph.add_node("final_response", self.final_response)
 
         graph.set_entry_point("receive_question")
-        graph.add_edge("receive_question", "classify_question")
-        graph.add_edge("classify_question", "inspect_schema")
-        graph.add_edge("inspect_schema", "plan_answer")
+        graph.add_edge("receive_question", "inspect_schema")
+        graph.add_edge("inspect_schema", "thinking")
+        graph.add_edge("thinking", "review_action")
         graph.add_conditional_edges(
-            "plan_answer",
-            self.route_after_plan,
-            {
-                "sql": "generate_sql",
-                "python": "generate_python",
-                "final": "final_response",
-            },
+            "review_action",
+            self.route_after_action_review,
+            {"act": "act_tool", "retry": "thinking", "final": "final_response"},
         )
-        graph.add_edge("generate_sql", "validate_sql")
+        graph.add_edge("act_tool", "verify_action")
         graph.add_conditional_edges(
-            "validate_sql",
-            self.route_after_sql_validation,
-            {
-                "execute": "execute_sql",
-                "repair": "generate_sql",
-                "python": "generate_python",
-                "final": "final_response",
-            },
-        )
-        graph.add_conditional_edges(
-            "execute_sql",
-            self.route_after_sql_execution,
-            {
-                "critique": "critique_answer",
-                "repair": "generate_sql",
-                "python": "generate_python",
-                "final": "final_response",
-            },
-        )
-        graph.add_edge("generate_python", "validate_python")
-        graph.add_conditional_edges(
-            "validate_python",
-            self.route_after_python_validation,
-            {"execute": "execute_python", "repair": "generate_python", "final": "final_response"},
-        )
-        graph.add_conditional_edges(
-            "execute_python",
-            self.route_after_python_execution,
-            {"critique": "critique_answer", "repair": "generate_python", "final": "final_response"},
-        )
-        graph.add_conditional_edges(
-            "critique_answer",
-            self.route_after_critique,
-            {"sql": "generate_sql", "python": "generate_python", "final": "final_response"},
+            "verify_action",
+            self.route_after_action_verification,
+            {"retry": "thinking", "final": "final_response"},
         )
         graph.add_edge("final_response", END)
         return graph.compile()
+
+    async def thinking(self, state: AgentState) -> AgentState:
+        state["react_rounds"] = int(state.get("react_rounds", 0)) + 1
+        feedback = self._react_feedback(state)
+        state["react_feedback"] = feedback
+        add_event(
+            state,
+            "Thinking",
+            "running",
+            f"Selecting the next action for round {state['react_rounds']}.",
+            round=state["react_rounds"],
+        )
+
+        if state.get("schema_context") == "No data sources are configured.":
+            action = {
+                "thought_summary": "No configured data sources are available to query.",
+                "phase": "No data sources",
+                "action": "direct_response",
+                "action_input": {
+                    "answer": (
+                        "I cannot analyze data yet because no SQLite, Excel, or CSV "
+                        "data sources are configured."
+                    )
+                },
+                "expected_output": "A clear explanation that data sources must be added.",
+                "requires_chart": False,
+            }
+        else:
+            prompt = [
+                {"role": "system", "content": REACT_THINKING_SYSTEM},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "question": state["user_question"],
+                            "recent_messages": state.get("messages", [])[-8:],
+                            "schema": state.get("schema_context", ""),
+                            "previous_feedback": feedback,
+                            "attempts": {
+                                "react_rounds": state.get("react_rounds", 0),
+                                "sql_attempts": state.get("sql_attempts", 0),
+                                "python_attempts": state.get("python_attempts", 0),
+                                "critique_attempts": state.get("critique_attempts", 0),
+                                "max_sql_attempts": MAX_SQL_ATTEMPTS,
+                                "max_python_attempts": MAX_PYTHON_ATTEMPTS,
+                            },
+                        }
+                    ),
+                },
+            ]
+            try:
+                action = await self.llm.complete_json(prompt, max_tokens=3600)
+            except Exception as exc:
+                state["errors"].append(f"Thinking step failed: {exc}")
+                action = {
+                    "thought_summary": "The model could not select a safe next action.",
+                    "phase": "Model unavailable",
+                    "action": "direct_response",
+                    "action_input": {
+                        "answer": (
+                            "I could not safely plan the next data-analysis step because "
+                            "the model endpoint was unavailable."
+                        )
+                    },
+                    "expected_output": "Graceful failure explanation.",
+                    "requires_chart": False,
+                }
+
+        action = self._normalize_react_action(action)
+        self._apply_react_action_to_state(state, action, increment_attempt=True)
+        state.setdefault("react_history", []).append(
+            {
+                "round": state.get("react_rounds", 0),
+                "phase": action.get("phase"),
+                "action": action.get("action"),
+                "thought_summary": action.get("thought_summary"),
+                "expected_output": action.get("expected_output"),
+            }
+        )
+        add_event(
+            state,
+            "Thinking",
+            "completed",
+            f"Selected {self._react_action_label(action.get('action'))}.",
+            action=action.get("action"),
+            phase=action.get("phase"),
+        )
+        return state
+
+    async def review_action(self, state: AgentState) -> AgentState:
+        action = state.get("current_action", {})
+        action_name = str(action.get("action") or "").strip()
+        add_event(
+            state,
+            "Reviewing",
+            "running",
+            f"Reviewing proposed action: {self._react_action_label(action_name)}.",
+            action=action_name,
+        )
+
+        review: dict[str, Any]
+        if action_name not in ALLOWED_REACT_ACTIONS:
+            review = {
+                "approved": False,
+                "summary": "The model selected an unsupported action.",
+                "issues": [f"Unsupported action: {action_name or '<empty>'}"],
+                "warnings": [],
+                "corrected_action": None,
+            }
+        else:
+            prompt = [
+                {"role": "system", "content": ACTION_REVIEW_SYSTEM},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "question": state["user_question"],
+                            "recent_messages": state.get("messages", [])[-8:],
+                            "schema": state.get("schema_context", ""),
+                            "proposed_action": action,
+                            "previous_feedback": state.get("react_feedback", {}),
+                            "attempts": {
+                                "sql_attempts": state.get("sql_attempts", 0),
+                                "python_attempts": state.get("python_attempts", 0),
+                                "critique_attempts": state.get("critique_attempts", 0),
+                            },
+                        }
+                    ),
+                },
+            ]
+            try:
+                review = await self.llm.complete_json(prompt, max_tokens=1800)
+            except Exception as exc:
+                review = {
+                    "approved": True,
+                    "summary": f"LLM action review was unavailable: {exc}",
+                    "issues": [],
+                    "warnings": [f"LLM action review was unavailable: {exc}"],
+                    "corrected_action": None,
+                }
+
+        review = self._normalize_action_review(review)
+        corrected_action = review.get("corrected_action")
+        if not review.get("approved") and isinstance(corrected_action, dict):
+            corrected = self._normalize_react_action(corrected_action)
+            if corrected.get("action") in ALLOWED_REACT_ACTIONS:
+                self._apply_react_action_to_state(
+                    state, corrected, increment_attempt=False
+                )
+                action = corrected
+                action_name = str(action.get("action") or "")
+                review["approved"] = True
+                review["warnings"] = [
+                    *self._string_list(review.get("warnings")),
+                    "Review supplied a corrected action before execution.",
+                ]
+
+        if review.get("approved"):
+            if action_name == "sql_query":
+                review = await self._review_sql_action(state, review)
+            elif action_name == "python_analysis":
+                review = self._review_python_action(state, review)
+
+        state["action_review"] = review
+        status = "completed" if review.get("approved") else "warning"
+        if not review.get("approved"):
+            state["errors"].extend(self._string_list(review.get("issues")))
+        add_event(
+            state,
+            "Reviewing",
+            status,
+            review.get("summary") or "Action review completed.",
+            issues=self._string_list(review.get("issues")),
+            warnings=self._string_list(review.get("warnings")),
+        )
+        return state
+
+    async def act_tool(self, state: AgentState) -> AgentState:
+        action = state.get("current_action", {})
+        action_name = str(action.get("action") or "").strip()
+        action_input = action.get("action_input") or {}
+        if not isinstance(action_input, dict):
+            action_input = {}
+
+        state["action_result"] = {}
+        add_event(
+            state,
+            "Acting",
+            "running",
+            f"Executing action: {self._react_action_label(action_name)}.",
+            action=action_name,
+        )
+
+        if action_name == "sql_query":
+            await self.execute_sql(state)
+            if state.get("sql_result"):
+                state["action_result"] = {
+                    "ok": True,
+                    "type": "sql",
+                    "summary": self._sql_result_summary(state),
+                }
+            else:
+                state["action_result"] = {
+                    "ok": False,
+                    "type": "sql",
+                    "error": self._latest_error(state),
+                }
+        elif action_name == "python_analysis":
+            await self.execute_python(state)
+            result = state.get("python_result", {})
+            state["action_result"] = {
+                "ok": bool(result.get("ok")),
+                "type": "python",
+                "summary": {
+                    "has_answer": bool(result.get("answer")),
+                    "has_table": bool(result.get("result_table")),
+                    "has_chart": bool(result.get("chart")),
+                },
+                "error": result.get("error"),
+            }
+        elif action_name == "metadata_answer":
+            final = await self._build_metadata_response(state)
+            state["draft_final_response"] = final
+            state["action_result"] = {"ok": True, "type": "metadata", "summary": final}
+        elif action_name == "question_suggestions":
+            final = await self._build_question_suggestions_response(state)
+            state["draft_final_response"] = final
+            state["action_result"] = {
+                "ok": True,
+                "type": "question_suggestions",
+                "summary": final,
+            }
+        elif action_name == "ask_clarification":
+            question = (
+                action_input.get("clarification_question")
+                or action_input.get("question")
+                or "Which table, metric, time period, or grouping should I use?"
+            )
+            state["draft_final_response"] = {
+                "answer": str(question),
+                "reasoning_summary": action.get("thought_summary")
+                or "Reviewed the schema and found that a clarification is required.",
+                "caveats": [],
+                "confidence": "low",
+            }
+            state["action_result"] = {
+                "ok": True,
+                "type": "ask_clarification",
+                "summary": {"question": question},
+            }
+        elif action_name == "direct_response":
+            answer = str(action_input.get("answer") or "").strip()
+            if answer:
+                state["draft_final_response"] = {
+                    "answer": answer,
+                    "reasoning_summary": action.get("thought_summary")
+                    or "Answered directly without running a data tool.",
+                    "caveats": self._string_list(action_input.get("caveats")),
+                    "confidence": action_input.get("confidence")
+                    if action_input.get("confidence") in {"low", "medium", "high"}
+                    else "medium",
+                }
+                state["action_result"] = {
+                    "ok": True,
+                    "type": "direct_response",
+                    "summary": {"answer": answer},
+                }
+            else:
+                state["action_result"] = {
+                    "ok": False,
+                    "type": "direct_response",
+                    "error": "Direct response action did not include an answer.",
+                }
+        else:
+            state["action_result"] = {
+                "ok": False,
+                "type": action_name,
+                "error": f"Unsupported action: {action_name}",
+            }
+
+        if state.get("action_result", {}).get("ok"):
+            add_event(
+                state,
+                "Acting",
+                "completed",
+                f"Action completed: {self._react_action_label(action_name)}.",
+                action=action_name,
+            )
+        else:
+            error = state.get("action_result", {}).get("error") or "Action failed."
+            state["errors"].append(str(error))
+            add_event(
+                state,
+                "Acting",
+                "error",
+                f"Action failed: {self._react_action_label(action_name)}.",
+                action=action_name,
+                error=error,
+            )
+        return state
+
+    async def verify_action(self, state: AgentState) -> AgentState:
+        action = state.get("current_action", {})
+        action_name = str(action.get("action") or "").strip()
+        result = state.get("action_result", {})
+        add_event(
+            state,
+            "Verifying",
+            "running",
+            "Checking whether the action result answers the request.",
+            action=action_name,
+        )
+
+        if not result.get("ok"):
+            verification = {
+                "passes": False,
+                "confidence": "low",
+                "summary": str(result.get("error") or "Action execution failed."),
+                "caveats": [str(result.get("error") or "Action execution failed.")],
+                "needs_repair": True,
+                "repair_action": self._next_repair_action_for_failure(state),
+            }
+        elif action_name in {"ask_clarification", "direct_response"}:
+            verification = {
+                "passes": True,
+                "confidence": state.get("draft_final_response", {}).get("confidence", "medium"),
+                "summary": "The reviewed non-execution response is ready for the user.",
+                "caveats": self._string_list(
+                    state.get("draft_final_response", {}).get("caveats")
+                ),
+                "needs_repair": False,
+                "repair_action": None,
+            }
+        elif action_name in {"sql_query", "python_analysis"}:
+            await self.critique_answer(state)
+            verification = self._verification_from_critique(state.get("critique", {}))
+        elif state.get("critique"):
+            verification = self._verification_from_critique(state.get("critique", {}))
+        else:
+            verification = await self._verify_non_execution_action(state)
+
+        state["verification"] = verification
+        status = "completed" if verification.get("passes") else "warning"
+        add_event(
+            state,
+            "Verifying",
+            status,
+            verification.get("summary") or "Verification completed.",
+            caveats=self._string_list(verification.get("caveats")),
+            repair_action=verification.get("repair_action"),
+        )
+        if not verification.get("passes") and self._can_retry_react(state):
+            add_event(
+                state,
+                "Retrying",
+                "running",
+                "Feeding review and execution feedback back into the next thinking round.",
+                repair_action=verification.get("repair_action"),
+            )
+        return state
+
+    def route_after_action_review(self, state: AgentState) -> str:
+        if self._json_bool(state.get("action_review", {}).get("approved"), default=False):
+            return "act"
+        if self._can_retry_react(state):
+            add_event(
+                state,
+                "Retrying",
+                "running",
+                "Action review failed; retrying with the review feedback.",
+            )
+            return "retry"
+        return "final"
+
+    def route_after_action_verification(self, state: AgentState) -> str:
+        if self._json_bool(state.get("verification", {}).get("passes"), default=False):
+            return "final"
+        if self._can_retry_react(state):
+            return "retry"
+        return "final"
+
+    def _react_feedback(self, state: AgentState) -> dict[str, Any]:
+        return {
+            "previous_action": state.get("current_action"),
+            "action_review": state.get("action_review"),
+            "action_result": state.get("action_result"),
+            "verification": state.get("verification"),
+            "sql": state.get("sql_query"),
+            "sql_validation": state.get("sql_validation"),
+            "sql_result_summary": self._sql_result_summary(state),
+            "sql_result_preview": state.get("sql_result", {}).get("rows", [])[:5],
+            "python_result": state.get("python_result"),
+            "critique": state.get("critique"),
+            "recent_errors": state.get("errors", [])[-8:],
+            "react_history": state.get("react_history", [])[-5:],
+        }
+
+    @staticmethod
+    def _normalize_react_action(payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            payload = {}
+        action = str(payload.get("action") or "").strip()
+        action_input = payload.get("action_input") or {}
+        if isinstance(action_input, str):
+            try:
+                parsed = json.loads(action_input)
+                action_input = parsed if isinstance(parsed, dict) else {"answer": action_input}
+            except Exception:
+                action_input = {"answer": action_input}
+        if not isinstance(action_input, dict):
+            action_input = {}
+        return {
+            "thought_summary": str(payload.get("thought_summary") or "").strip(),
+            "phase": str(payload.get("phase") or action or "Act").strip(),
+            "action": action,
+            "action_input": action_input,
+            "expected_output": str(payload.get("expected_output") or "").strip(),
+            "requires_chart": DataChatAgent._json_bool(
+                payload.get("requires_chart"), default=False
+            ),
+        }
+
+    def _apply_react_action_to_state(
+        self,
+        state: AgentState,
+        action: dict[str, Any],
+        *,
+        increment_attempt: bool,
+    ) -> None:
+        action_name = str(action.get("action") or "").strip()
+        action_input = action.get("action_input") or {}
+        if not isinstance(action_input, dict):
+            action_input = {}
+
+        state["current_action"] = action
+        state["execution_plan"] = {
+            "tool": self._execution_tool_for_action(action_name),
+            "steps": [action.get("phase") or self._react_action_label(action_name)],
+            "requires_chart": bool(action.get("requires_chart")),
+            "clarification_question": action_input.get("clarification_question"),
+            "analysis_contract": {
+                "expected_output": action.get("expected_output"),
+                "thought_summary": action.get("thought_summary"),
+            },
+        }
+        state["action_review"] = {}
+        state["action_result"] = {}
+        state["verification"] = {}
+        state["draft_final_response"] = {}
+        state["critique"] = {}
+
+        if action_name == "sql_query":
+            if increment_attempt:
+                state["sql_attempts"] = int(state.get("sql_attempts", 0)) + 1
+            state["sql_validation"] = {}
+            state["sql_result"] = {}
+            state["sql_query"] = str(action_input.get("sql") or "").strip()
+        elif action_name == "python_analysis":
+            if increment_attempt:
+                state["python_attempts"] = int(state.get("python_attempts", 0)) + 1
+            state["python_validation"] = {}
+            state["python_result"] = {}
+            state["python_code"] = str(action_input.get("code") or "").strip()
+
+    @staticmethod
+    def _execution_tool_for_action(action_name: str) -> str:
+        return {
+            "sql_query": "sql",
+            "python_analysis": "python",
+            "metadata_answer": "metadata",
+            "question_suggestions": "question_suggestions",
+            "ask_clarification": "clarify",
+            "direct_response": "none",
+        }.get(action_name, "none")
+
+    @staticmethod
+    def _react_action_label(action_name: Any) -> str:
+        return {
+            "sql_query": "SQL query",
+            "python_analysis": "Python analysis",
+            "metadata_answer": "metadata answer",
+            "question_suggestions": "question suggestions",
+            "ask_clarification": "clarification",
+            "direct_response": "direct response",
+        }.get(str(action_name or ""), str(action_name or "unknown action"))
+
+    def _normalize_action_review(self, payload: Any) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            payload = {}
+        corrected = payload.get("corrected_action")
+        if not isinstance(corrected, dict):
+            corrected = None
+        return {
+            "approved": self._json_bool(payload.get("approved"), default=False),
+            "summary": str(payload.get("summary") or "").strip(),
+            "issues": self._string_list(payload.get("issues")),
+            "warnings": self._string_list(payload.get("warnings")),
+            "corrected_action": corrected,
+        }
+
+    async def _review_sql_action(
+        self, state: AgentState, review: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = self.sql_guard.validate(state.get("sql_query", ""), state.get("table_columns", {}))
+        state["sql_validation"] = {
+            "is_valid": result.is_valid,
+            "errors": result.errors,
+            "warnings": result.warnings,
+            "used_tables": result.used_tables,
+            "used_columns": result.used_columns,
+        }
+        if not result.is_valid:
+            return {
+                **review,
+                "approved": False,
+                "summary": "SQL failed static safety or schema validation.",
+                "issues": [*self._string_list(review.get("issues")), *result.errors],
+                "warnings": [*self._string_list(review.get("warnings")), *result.warnings],
+            }
+
+        critique = await self._critique_sql_before_execution(state)
+        if critique and not self._json_bool(critique.get("passes"), default=True):
+            critique_errors = self._string_list(critique.get("errors")) or [
+                "SQL critique found that the query may not answer the question."
+            ]
+            corrected_sql = str(critique.get("corrected_sql") or "").strip()
+            corrected_validation = critique.get("corrected_sql_validation") or {}
+            if corrected_sql and corrected_validation.get("is_valid"):
+                state["sql_query"] = corrected_sql
+                state["sql_validation"] = {
+                    "is_valid": True,
+                    "errors": [],
+                    "warnings": [
+                        *result.warnings,
+                        *self._string_list(critique.get("warnings")),
+                        *[
+                            f"SQL critic corrected prior query: {error}"
+                            for error in critique_errors
+                        ],
+                    ],
+                    "used_tables": corrected_validation.get("used_tables", []),
+                    "used_columns": corrected_validation.get("used_columns", {}),
+                    "llm_critique": critique,
+                }
+                return {
+                    **review,
+                    "approved": True,
+                    "summary": "SQL review supplied a safe corrected query.",
+                    "warnings": [
+                        *self._string_list(review.get("warnings")),
+                        *self._string_list(critique.get("warnings")),
+                    ],
+                }
+
+            return {
+                **review,
+                "approved": False,
+                "summary": "SQL critique requested a corrected query.",
+                "issues": [*self._string_list(review.get("issues")), *critique_errors],
+                "warnings": [
+                    *self._string_list(review.get("warnings")),
+                    *self._string_list(critique.get("warnings")),
+                ],
+            }
+
+        if critique:
+            state["sql_validation"]["llm_critique"] = critique
+        return {
+            **review,
+            "approved": True,
+            "summary": review.get("summary") or "SQL passed review and validation.",
+            "warnings": [*self._string_list(review.get("warnings")), *result.warnings],
+        }
+
+    def _review_python_action(
+        self, state: AgentState, review: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = self.python_guard.validate(state.get("python_code", ""))
+        state["python_validation"] = {
+            "is_valid": result.is_valid,
+            "errors": result.errors,
+            "warnings": result.warnings,
+        }
+        if not result.is_valid:
+            return {
+                **review,
+                "approved": False,
+                "summary": "Python failed sandbox safety validation.",
+                "issues": [*self._string_list(review.get("issues")), *result.errors],
+                "warnings": [*self._string_list(review.get("warnings")), *result.warnings],
+            }
+        return {
+            **review,
+            "approved": True,
+            "summary": review.get("summary") or "Python passed sandbox safety validation.",
+            "warnings": [*self._string_list(review.get("warnings")), *result.warnings],
+        }
+
+    @staticmethod
+    def _latest_error(state: AgentState) -> str | None:
+        errors = state.get("errors") or []
+        return str(errors[-1]) if errors else None
+
+    def _verification_from_critique(self, critique: dict[str, Any]) -> dict[str, Any]:
+        repair_tool = critique.get("repair_tool")
+        repair_action = None
+        if repair_tool == "sql":
+            repair_action = "sql_query"
+        elif repair_tool == "python":
+            repair_action = "python_analysis"
+        return {
+            "passes": self._json_bool(critique.get("passes"), default=True),
+            "confidence": critique.get("confidence")
+            if critique.get("confidence") in {"low", "medium", "high"}
+            else "medium",
+            "summary": critique.get("summary") or "Result critique completed.",
+            "caveats": self._string_list(critique.get("caveats")),
+            "needs_repair": self._json_bool(critique.get("needs_repair"), default=False),
+            "repair_action": repair_action,
+        }
+
+    def _next_repair_action_for_failure(self, state: AgentState) -> str | None:
+        current = str(state.get("current_action", {}).get("action") or "")
+        if current == "sql_query":
+            if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+                return "sql_query"
+            if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+                return "python_analysis"
+        if current == "python_analysis":
+            if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+                return "python_analysis"
+            if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+                return "sql_query"
+        if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+            return "sql_query"
+        if int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS:
+            return "python_analysis"
+        return None
+
+    async def _verify_non_execution_action(self, state: AgentState) -> dict[str, Any]:
+        prompt = [
+            {"role": "system", "content": ACTION_VERIFY_SYSTEM},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "question": state["user_question"],
+                        "recent_messages": state.get("messages", [])[-8:],
+                        "schema": state.get("schema_context", ""),
+                        "action": state.get("current_action"),
+                        "result": state.get("action_result"),
+                        "draft_final_response": state.get("draft_final_response"),
+                        "previous_feedback": state.get("react_feedback"),
+                    }
+                ),
+            },
+        ]
+        try:
+            payload = await self.llm.complete_json(prompt, max_tokens=1200)
+        except Exception as exc:
+            return {
+                "passes": True,
+                "confidence": "medium",
+                "summary": f"Verification model was unavailable: {exc}",
+                "caveats": [f"Automated verification was unavailable: {exc}"],
+                "needs_repair": False,
+                "repair_action": None,
+            }
+        repair_action = payload.get("repair_action")
+        if repair_action not in ALLOWED_REACT_ACTIONS:
+            repair_action = None
+        confidence = payload.get("confidence")
+        if confidence not in {"low", "medium", "high"}:
+            confidence = "medium"
+        return {
+            "passes": self._json_bool(payload.get("passes"), default=True),
+            "confidence": confidence,
+            "summary": str(payload.get("summary") or "Verification completed."),
+            "caveats": self._string_list(payload.get("caveats")),
+            "needs_repair": self._json_bool(payload.get("needs_repair"), default=False),
+            "repair_action": repair_action,
+        }
+
+    def _can_retry_react(self, state: AgentState) -> bool:
+        if int(state.get("react_rounds", 0)) >= MAX_REACT_ROUNDS:
+            return False
+        if int(state.get("sql_attempts", 0)) < MAX_SQL_ATTEMPTS:
+            return True
+        return int(state.get("python_attempts", 0)) < MAX_PYTHON_ATTEMPTS
 
     async def receive_question(self, state: AgentState) -> AgentState:
         add_event(state, "Planning", "running", "Received the question and conversation context.")
@@ -290,10 +954,16 @@ class DataChatAgent:
         if not isinstance(audit, dict):
             return plan
         audited_tool = str(audit.get("tool") or "").strip()
-        if audited_tool in {"question_suggestions", "metadata", "sql", "python", "clarify", "none"}:
-            if not self._json_bool(audit.get("passes"), default=True):
-                plan = {**plan, "tool": audited_tool}
-                plan["plan_audit_reasoning_summary"] = audit.get("reasoning_summary", "")
+        if audited_tool in {
+            "question_suggestions",
+            "metadata",
+            "sql",
+            "python",
+            "clarify",
+            "none",
+        } and not self._json_bool(audit.get("passes"), default=True):
+            plan = {**plan, "tool": audited_tool}
+            plan["plan_audit_reasoning_summary"] = audit.get("reasoning_summary", "")
         return plan
 
     async def generate_sql(self, state: AgentState) -> AgentState:
@@ -565,7 +1235,12 @@ class DataChatAgent:
         source_refs = self._build_source_refs(state)
         selected_tool = state.get("execution_plan", {}).get("tool")
 
-        if (
+        if state.get("draft_final_response"):
+            final = dict(state["draft_final_response"])
+            artifacts = final.pop("artifacts", artifacts)
+            source_refs = final.pop("sources", source_refs)
+
+        elif (
             selected_tool == "metadata"
             or (not selected_tool and state.get("question_type") == "metadata_lookup")
         ):
