@@ -51,6 +51,60 @@ npm run dev
 
 4. In Settings, browse for or add one or more local `.sqlite`, `.db`, `.sqlite3`, `.xlsx`, `.xlsm`, `.xls`, `.csv`, or `.tsv` files.
 
+## Cloudera Application Startup
+
+For Cloudera-style deployments where only one local port is exposed, use the included
+supervisor script. It starts FastAPI on a private loopback port and Vite on the
+single exposed port with an `/api` proxy to the backend.
+
+Default ports:
+
+- Frontend/Vite: `http://127.0.0.1:8090`
+- Backend/FastAPI: `http://127.0.0.1:8001`
+
+Configure the public Cloudera host in `cloudera_app_config.json`:
+
+```json
+{
+  "public_host": "your-dynamic-cloudera-host.example.com",
+  "frontend_port_env": "CDSW_APP_PORT",
+  "frontend_host": "127.0.0.1",
+  "frontend_port": 8090,
+  "backend_host": "127.0.0.1",
+  "backend_port": 8001,
+  "node_bin": "",
+  "npm_bin": ""
+}
+```
+
+At runtime, `start_app.py` prefers `CDSW_APP_PORT` over the configured
+`frontend_port`, falls back to `CDSW_READONLY_PORT` if present, and then falls back
+to `8090`. This matches Cloudera's documented application port model. The frontend
+also exposes `GET /healthz`, so set the Cloudera application polling endpoint to:
+
+```bash
+CDSW_APP_POLLING_ENDPOINT=/healthz
+```
+
+Vite requires Node.js 18 or newer. If the Cloudera runtime has multiple Node
+versions, set `node_bin` and `npm_bin` in `cloudera_app_config.json` or export
+`NODE_BIN` and `NPM_BIN`.
+
+Start in the foreground, which is usually what Cloudera process managers expect:
+
+```bash
+python start_app.py
+```
+
+For local/manual control:
+
+```bash
+./stop.sh
+./restart.sh
+```
+
+Logs and the runtime PID file are written under `.data/`.
+
 ## vLLM Configuration
 
 The backend expects an OpenAI-compatible endpoint.

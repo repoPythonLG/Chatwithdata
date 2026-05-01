@@ -1,0 +1,13 @@
+{
+  "public_host": "",
+  "frontend_port_env": "CDSW_APP_PORT",
+  "frontend_host": "127.0.0.1",
+  "frontend_port": 8090,
+  "backend_host": "127.0.0.1",
+  "backend_port": 8001,
+  "node_bin": "",
+  "npm_bin": "",
+  "vite_hmr": false,
+  "log_dir": ".data/logs",
+  "pid_file": ".data/chatwithdata.pid"
+}
