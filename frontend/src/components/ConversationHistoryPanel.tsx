@@ -55,19 +55,27 @@ export function ConversationHistoryPanel({
         <h2 className="font-semibold">Conversations</h2>
         <div className="flex gap-2">
           <Button
+            variant="primary"
+            className="h-10 w-10 rounded-2xl p-0 shadow-harbor-500/15"
+            onClick={onNew}
+            title="New conversation"
+            aria-label="New conversation"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+          <Button
             variant="ghost"
+            className="h-10 w-10 rounded-2xl p-0 text-ink-500 hover:border-red-100 hover:bg-red-50 hover:text-red-600 dark:text-ink-100 dark:hover:border-red-500/20 dark:hover:bg-red-500/10 dark:hover:text-red-200"
             onClick={() => {
               if (window.confirm("Clear all conversation history?")) {
                 clearConversations.mutate();
               }
             }}
             disabled={!conversations.data?.length || clearConversations.isPending}
+            title="Clear all conversations"
+            aria-label="Clear all conversations"
           >
-            Clear all
-          </Button>
-          <Button variant="ghost" onClick={onNew}>
-            <Plus className="mr-2 h-4 w-4" />
-            New
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>

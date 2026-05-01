@@ -28,6 +28,7 @@ from app.agent.python_guard import PythonGuard
 from app.agent.python_sandbox import PythonSandbox
 from app.agent.sql_guard import SqlGuard
 from app.agent.state import AgentState
+from app.agent.text_sanitizer import sanitize_user_text
 from app.core.config import get_settings
 from app.core.llm import LLMClient
 from app.datasources.catalog import DataSourceCatalog
@@ -42,7 +43,7 @@ def status_event(step: str, status: str, message: str, **metadata: Any) -> dict[
     return {
         "step": step,
         "status": status,
-        "message": message,
+        "message": sanitize_user_text(message),
         "timestamp": datetime.utcnow().isoformat(),
         "metadata": metadata,
     }
@@ -1465,7 +1466,10 @@ class DataChatAgent:
                     "Ran sandboxed Python analysis over approved tables.",
                 ),
                 "caveats": state.get("critique", {}).get("caveats", []),
-                "confidence": state.get("critique", {}).get("confidence", "medium"),
+                "confidence": self._bounded_confidence(
+                    state.get("critique", {}).get("confidence"),
+                    state.get("critique", {}),
+                ),
             }
 
         prompt = [
@@ -1492,8 +1496,10 @@ class DataChatAgent:
                 "reasoning_summary": final.get("reasoning_summary")
                 or "Executed the validated plan.",
                 "caveats": final.get("caveats") or state.get("critique", {}).get("caveats", []),
-                "confidence": final.get("confidence")
-                or state.get("critique", {}).get("confidence", "medium"),
+                "confidence": self._bounded_confidence(
+                    final.get("confidence"),
+                    state.get("critique", {}),
+                ),
             }
         except Exception as exc:
             caveats = state.get("critique", {}).get("caveats", [])
@@ -1502,8 +1508,24 @@ class DataChatAgent:
                 "answer": self._fallback_answer(state),
                 "reasoning_summary": "Used validated execution results and a fallback summarizer.",
                 "caveats": caveats,
-                "confidence": state.get("critique", {}).get("confidence", "medium"),
+                "confidence": self._bounded_confidence(None, state.get("critique", {})),
             }
+
+    @staticmethod
+    def _bounded_confidence(candidate: Any, critique: dict[str, Any]) -> str:
+        order = {"low": 0, "medium": 1, "high": 2}
+        candidate_text = str(candidate or "").strip().lower()
+        critique_text = str(critique.get("confidence") or "").strip().lower()
+        confidence = candidate_text if candidate_text in order else critique_text
+        if confidence not in order:
+            confidence = "medium"
+
+        if not DataChatAgent._json_bool(critique.get("passes"), default=True):
+            return "low"
+
+        if critique_text in order and order[confidence] > order[critique_text]:
+            return critique_text
+        return confidence
 
     @staticmethod
     def _active_errors_for_final(state: AgentState) -> list[str]:
@@ -1519,9 +1541,23 @@ class DataChatAgent:
 
     @staticmethod
     def _fallback_answer(state: AgentState) -> str:
-        if state.get("sql_result", {}).get("rows"):
-            row_count = state["sql_result"].get("row_count", 0)
-            return f"I found {row_count} result row(s). See the result table for details."
+        sql_result = state.get("sql_result", {})
+        rows = sql_result.get("rows") or []
+        columns = sql_result.get("columns") or []
+        if rows:
+            row_count = sql_result.get("row_count", len(rows))
+            aggregate_columns = DataChatAgent._aggregate_result_columns(columns)
+            preview = DataChatAgent._format_fallback_rows(rows[:3], columns)
+            if aggregate_columns:
+                metric_text = ", ".join(aggregate_columns[:3])
+                return (
+                    f"The result table contains {row_count} grouped result row(s) with "
+                    f"aggregate metric(s): {metric_text}. Top rows shown include: {preview}."
+                )
+            return (
+                f"The query returned {row_count} result row(s) with columns "
+                f"{', '.join(columns[:8])}. First rows shown include: {preview}."
+            )
         if state.get("python_result", {}).get("stdout"):
             return state["python_result"]["stdout"].strip()
         if state.get("errors"):
@@ -1530,3 +1566,43 @@ class DataChatAgent:
                 "See caveats for the validation or execution errors."
             )
         return "The analysis completed, but no rows were returned."
+
+    @staticmethod
+    def _aggregate_result_columns(columns: list[str]) -> list[str]:
+        aggregate_tokens = (
+            "count",
+            "total",
+            "sum",
+            "avg",
+            "average",
+            "mean",
+            "median",
+            "min",
+            "max",
+            "pct",
+            "percent",
+            "percentage",
+            "share",
+            "rate",
+        )
+        return [
+            column
+            for column in columns
+            if any(token in column.lower() for token in aggregate_tokens)
+        ]
+
+    @staticmethod
+    def _format_fallback_rows(rows: list[dict[str, Any]], columns: list[str]) -> str:
+        formatted_rows: list[str] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                formatted_rows.append(str(row))
+                continue
+            visible_columns = columns[:6] if columns else list(row.keys())[:6]
+            cells = [
+                f"{column}={row.get(column)}"
+                for column in visible_columns
+                if column in row and row.get(column) is not None
+            ]
+            formatted_rows.append("; ".join(cells))
+        return " | ".join(formatted_rows)

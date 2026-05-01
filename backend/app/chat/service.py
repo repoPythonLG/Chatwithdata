@@ -12,6 +12,11 @@ from sqlalchemy.orm import selectinload
 
 from app.agent.graph import DataChatAgent
 from app.agent.state import AgentState
+from app.agent.text_sanitizer import (
+    sanitize_status_events,
+    sanitize_user_text,
+    sanitize_user_text_list,
+)
 from app.core.llm import LLMClient
 from app.core.runtime_settings import RuntimeSettingsService, settings_from_effective
 from app.db.models import ChatMessage, Conversation
@@ -158,7 +163,7 @@ class ChatService:
     @staticmethod
     def _context_content(row: ChatMessage) -> str:
         if row.role != "assistant" or not row.payload:
-            return row.content
+            return sanitize_user_text(row.content) if row.role == "assistant" else row.content
 
         payload = row.payload
         compact: dict[str, Any] = {}
@@ -212,17 +217,20 @@ class ChatService:
     @staticmethod
     def _response_from_state(conversation_id: str, state: AgentState) -> ChatResponse:
         final = state.get("final_response") or {}
+        status_events = sanitize_status_events(
+            final.get("status_events") or state.get("status_events", [])
+        )
         return ChatResponse(
             conversation_id=conversation_id,
-            answer=final.get("answer") or "I could not produce an answer.",
-            reasoning_summary=final.get("reasoning_summary") or "",
+            answer=sanitize_user_text(final.get("answer") or "I could not produce an answer."),
+            reasoning_summary=sanitize_user_text(final.get("reasoning_summary") or ""),
             sql_query=final.get("sql_query"),
             python_code=final.get("python_code"),
             artifacts=final.get("artifacts") or [],
             sources=final.get("sources") or [],
-            caveats=final.get("caveats") or [],
+            caveats=sanitize_user_text_list(final.get("caveats") or []),
             confidence=final.get("confidence") or "medium",
-            status_events=final.get("status_events") or state.get("status_events", []),
+            status_events=status_events,
         )
 
     @staticmethod

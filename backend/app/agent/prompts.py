@@ -16,7 +16,7 @@ business observations as sql_answerable when data tables are available; the work
 should compute evidence first instead of asking the user to choose an insight type.
 Classify standard tabular analysis as sql_answerable, including counts, sums,
 averages/means, minimums, maximums, numeric column summaries, filtering, grouping,
-ranking, and joins. Do not classify these as requires_python.
+ranking, distributions, and joins. Do not classify these as requires_python.
 Classify distinct counts, unique counts, duplicate checks, overlap counts, and missing
 value counts as sql_answerable.
 Classify row-level comparisons across related tables as sql_answerable, including
@@ -109,6 +109,10 @@ final answer explain the most useful findings and assumptions.
 Use SQL for data-quality summaries and quality checks. Produce evidence such as row
 counts, missing values, duplicate key counts, inconsistent mappings, date ranges,
 join overlap, and mismatch counts where supported by the schema.
+Use SQL for distribution questions. A distribution means grouped counts and, when
+possible, percentages by the requested categorical dimensions, not raw row listings.
+For high-cardinality dimensions, a compact top-N per dimension is preferable to an
+exhaustive list that overwhelms the UI; the answer should state when it is showing top values.
 Excel and CSV sheets are already exposed as SQL tables. Do not choose Python merely
 because the data came from an Excel or CSV file.
 If classification says requires_python but the request is a standard tabular lookup,
@@ -122,6 +126,10 @@ states them. If a compound request has a filter for only one part, attach it onl
 that subquestion. Example: "average resolution hours by priority and identify the
 open ticket with the longest resolution time" means the average has no status filter,
 while the longest-ticket subquestion has status=open.
+For distribution questions over multiple dimensions, prefer a tidy long-format
+contract: source/table, dimension_name, dimension_value, record_count, and percentage.
+Do not require separate output columns for each dimension unless the user explicitly
+asks for a wide table.
 If the request asks for details, sorting, top/bottom records, highest/lowest values,
 or more rows from a previous answer, choose SQL first.
 For follow-up pronouns such as "that", "this", or "it", plan against the immediately
@@ -154,7 +162,7 @@ agent. Return JSON only:
 Use metadata only for schema/catalog/overview questions. If the user asks for actual
 row values, distinct/unique counts, missing values, duplicates, earliest/latest dates,
 min/max, trends, rankings, joins, overlaps, comparisons, aggregates, insights, key
-findings, takeaways, data-quality checks, completeness checks, consistency checks,
+findings, takeaways, distributions, data-quality checks, completeness checks, consistency checks,
 or "how many" records/entities/items exist, the tool should be sql unless Python is
 truly required.
 Do not ask for clarification when a sensible default metric exists, such as counting
@@ -212,6 +220,8 @@ Return JSON only:
   "confidence": "low" | "medium" | "high"
 }
 Rules:
+- Write all user-facing text in English only unless the user explicitly asks for another language.
+- Do not include garbled encoding, replacement characters, or non-English fragments.
 - Use only the provided schema and samples.
 - Generate specific, realistic questions grounded in available tables and columns.
 - Use user-facing workbook/source names and original table or sheet names; do not expose
@@ -247,6 +257,8 @@ Return JSON only:
 Check that every suggested question is supported by the schema and that the answer
 actually responds to "what questions can I ask?". Reject suggestions that mention
 filter values, statuses, dates, or categories not present in the supplied samples.
+Write summary, caveats, revised_answer, and revised_questions in English only.
+Do not include garbled encoding, replacement characters, or non-English fragments.
 Always return revised_answer and revised_questions. If the draft is good, copy it;
 if anything is unsupported, rewrite it conservatively instead of passing it through.
 Do not reveal hidden chain-of-thought.
@@ -261,6 +273,8 @@ Return JSON only:
   "confidence": "low" | "medium" | "high"
 }
 Rules:
+- Write all user-facing text in English only unless the user explicitly asks for another language.
+- Do not include garbled encoding, replacement characters, or non-English fragments.
 - Use only the provided schema, samples, row counts, and relationships.
 - Treat the schema as internal context. Answer the user's actual question; do not dump
   the whole catalog unless the user explicitly asks for a catalog/table listing.
@@ -284,6 +298,8 @@ Return JSON only:
 Check that the overview is fully grounded in the schema and actually answers the
 user's request. Remove unsupported claims, invented examples, or references to data
 not present in the catalog. Always return revised_answer; if the draft is good, copy it.
+Write summary, caveats, and revised_answer in English only. Do not include garbled
+encoding, replacement characters, or non-English fragments.
 Do not reveal hidden chain-of-thought.
 """
 
@@ -355,6 +371,56 @@ Rules:
 - When producing grouped counts by table/source across multiple tables, aggregate each
   table in its own SELECT and combine the aggregate rows with UNION ALL. Do not rely on
   grouping an outer UNION subquery by a derived source-table alias.
+- For distribution questions, return grouped aggregate rows rather than raw detail
+  rows. Group by every requested categorical dimension that exists in the relevant
+  table(s), include a count such as record_count, and include a percentage/share when
+  feasible. If multiple relevant tables are in scope, aggregate each table separately,
+  include a source_table label, and combine the grouped aggregate rows with UNION ALL.
+  Do not answer a distribution request with SELECT *, raw rows, or an arbitrary LIMIT.
+  Prefer a tidy long-format result with columns like source_table, dimension_name,
+  dimension_value, record_count, and pct_of_dimension. Compute percentages within each
+  source_table + dimension_name group unless the user explicitly asks for a global
+  denominator across unrelated dimensions. A safe pattern is to build a grouped CTE
+  with one UNION ALL branch per table/dimension, then compute
+  ROUND(100.0 * record_count / NULLIF(SUM(record_count) OVER
+  (PARTITION BY source_table, dimension_name), 0), 2) AS pct_of_dimension.
+  Do not join independent distribution branches merely to compute totals.
+  source_table must identify the actual table/source; dimension_name must identify
+  the grouped column or business dimension, such as plant or cost_center. Do not use
+  source_table to store dimension names. When multiple selected tables contain the
+  requested dimensions or close schema equivalents, include each table separately
+  instead of silently choosing one. Keep similar-but-distinct columns such as
+  cost_center and cost_center_wbs as separate dimension_name values unless the user
+  explicitly asks to merge or reconcile them.
+  Do not apply one global LIMIT to distribution results because it can hide entire
+  dimensions. If a cap is needed for high-cardinality categories, use ROW_NUMBER()
+  OVER (PARTITION BY source_table, dimension_name ORDER BY record_count DESC,
+  dimension_value) and keep the top N within each source_table + dimension_name
+  (default to 25 unless the user requests a different size or full output). Order the
+  final result by rn first, then source_table and dimension_name, so the preview shows
+  every requested dimension instead of exhausting the preview on one high-cardinality
+  dimension.
+  The required safe pattern for multi-dimension distributions is:
+    WITH grouped AS (
+      SELECT 'actual_table' AS source_table, 'dimension_col' AS dimension_name,
+             CAST("dimension_col" AS VARCHAR) AS dimension_value, COUNT(*) AS record_count
+      FROM "actual_table" WHERE "dimension_col" IS NOT NULL GROUP BY "dimension_col"
+      UNION ALL ...
+    ),
+    scored AS (
+      SELECT source_table, dimension_name, dimension_value, record_count,
+             ROUND(100.0 * record_count / NULLIF(SUM(record_count)
+               OVER (PARTITION BY source_table, dimension_name), 0), 2) AS pct_of_dimension,
+             ROW_NUMBER() OVER (PARTITION BY source_table, dimension_name
+               ORDER BY record_count DESC, dimension_value) AS rn
+      FROM grouped
+    )
+    SELECT source_table, dimension_name, dimension_value, record_count, pct_of_dimension
+    FROM scored
+    WHERE rn <= 25
+    ORDER BY rn, source_table, dimension_name, dimension_value.
+  Do not use ORDER BY dimension_name, record_count DESC for multi-dimension
+  distributions because the preview can show only one dimension.
 - For follow-ups using "those", "that", "the previous result", or similar wording,
   preserve the prior result scope from recent_messages and add only the new user-stated
   filter, sort, or output request. Do not introduce additional quality/status/disposition
@@ -427,6 +493,8 @@ Rules:
   resolved against the schema.
 - Check table names, column names, joins, filters, sorting, aggregation, limits, and quoting.
 - Use only the provided schema and sample rows. Do not invent tables or columns.
+- DuckDB canonical table and column identifiers should be double-quoted. Do not reject
+  valid double-quoted identifiers; reject only malformed or double-escaped quoting.
 - Reject double-escaped identifiers, malformed quoting, wrong table aliases, unsupported
   filters, missing ORDER BY for highest/lowest/top/bottom questions, and SQL that would
   return a schema/catalog answer instead of executing the user's requested analysis.
@@ -461,6 +529,24 @@ Rules:
   EXTRACT('year' FROM ...). corrected_sql should use EXTRACT(YEAR FROM ...).
 - Reject grouped count SQL that unions raw rows from multiple tables and then groups by
   a derived source-table label. Prefer one grouped SELECT per table combined with UNION ALL.
+- Reject distribution SQL that returns raw/detail rows, SELECT *, or an arbitrary LIMIT
+  instead of grouped aggregate rows. A distribution query must group by the requested
+  categorical dimensions and include a count metric, preferably also a percentage/share.
+  Accept tidy long-format distribution output using source_table, dimension_name,
+  dimension_value, record_count, and pct/share columns; do not reject it merely because
+  requested dimensions appear as row values rather than separate wide columns.
+  Percentages should normally be within each source_table + dimension_name partition,
+  not across unrelated dimensions such as plant and cost center.
+  Reject distribution SQL that uses source_table to store dimension names instead of
+  actual source/table labels, or that omits relevant selected tables containing the
+  requested dimensions. Reject one global LIMIT on distribution results; use a
+  per-source_table + per-dimension_name top-N cap if a cap is necessary.
+  Do not reject a per-source_table + per-dimension_name top-N cap merely because the
+  user asked for a distribution; compact top values are acceptable for high-cardinality
+  dimensions when every requested dimension is represented.
+  Reject ordering that can hide requested dimensions in the visible preview, such as
+  ordering all cost-center rows before all plant rows when a per-dimension cap is used.
+  Prefer ordering by per-partition rank first, then source_table and dimension_name.
 - When plan.analysis_contract is present, compare SQL against it. Reject SQL that applies
   a subquestion-specific filter to the wrong subquestion, omits requested outputs, or
   violates forbidden_assumptions.
@@ -513,6 +599,20 @@ Mandatory checks:
   product code.
 - If the user asks for highest/lowest/top/bottom/ranking, the result must include the
   ranking metric needed to audit the answer.
+- For distribution questions, require grouped aggregate rows with count/share metrics.
+  Accept tidy long-format output using source_table, dimension_name, dimension_value,
+  record_count, and pct/share columns. Do not force separate wide columns for each
+  dimension unless the user requested a wide table. Do not reject valid double-quoted
+  DuckDB identifiers.
+  The result must include every requested dimension that exists in the selected schema.
+  A global cap that returns only one dimension while hiding others does not pass.
+  If the visible result preview hides one requested dimension due ordering, request
+  SQL repair with interleaved per-dimension ordering.
+  For multi-dimension distribution SQL, reject final ordering such as
+  ORDER BY dimension_name, record_count DESC; require an rn computed with ROW_NUMBER()
+  per source_table + dimension_name and final ORDER BY rn first.
+  Do not require exhaustive output for high-cardinality distributions; top-N per
+  source_table + dimension_name is acceptable when every requested dimension appears.
 - For overlap/intersection/exclusion/same/different questions between related tables,
   the SQL must join or compare on the strongest shared business key and return the
   metric or compared fields needed to audit the result.
@@ -542,7 +642,8 @@ Rules:
 - Do not read or write files.
 - Do not use network, subprocess, shell, sockets, environment variables, or unsafe imports.
 - Use query(sql) to load only the data needed.
-- Set answer to a concise string.
+- Set answer to a concise English string. Do not include garbled encoding, replacement
+  characters, or non-English fragments unless the user explicitly asks for another language.
 - Optionally set result_table to a pandas DataFrame or records list.
 - Optionally set chart to a Plotly figure or Plotly-compatible dict.
 """
@@ -558,6 +659,24 @@ Return JSON only:
   "summary": "short critique summary"
 }
 Pass only when the executed result directly answers the user's question.
+Write summary and caveats in English only. Do not include garbled encoding,
+replacement characters, or non-English fragments.
+For distribution questions, the executed result must be a grouped summary with the
+requested dimensions plus count/share metrics. A raw detail listing capped at 1,000
+rows does not answer a distribution question; set needs_repair=true and repair_tool="sql".
+Tidy long-format distribution results are valid when dimension names and values are
+represented as rows, for example source_table, dimension_name, dimension_value,
+record_count, and pct/share. Do not require separate columns for each dimension unless
+the user explicitly requested that shape.
+The result must include all requested dimensions that exist in the selected schema.
+If a global result cap hides one requested dimension, set needs_repair=true and
+repair_tool="sql"; the repair should use per-dimension top-N rows.
+If all requested dimensions exist in the executed result but the preview ordering hides
+some of them, request SQL repair so the result is ordered by per-dimension rank first.
+Do not fail a high-cardinality distribution solely because it returns top-N rows per
+source_table + dimension_name instead of every distinct value. Pass it when every
+requested dimension is represented, counts and percentages are present, and the final
+answer can caveat that it shows top values.
 For ranked, highest, lowest, minimum, maximum, or top/bottom questions, the executed
 result should expose the ranking metric in the result table unless the user explicitly
 asked for only an identifier or label.
@@ -589,7 +708,19 @@ Return JSON only:
   "caveats": ["..."],
   "confidence": "low" | "medium" | "high"
 }
+Write all user-facing text in English only unless the user explicitly asks for another
+language. Do not include Chinese or any other non-English fragments, garbled encoding,
+or replacement characters. Use plain English terms such as "chart" or "visualization"
+instead of non-English words.
 Be precise and transparent about uncertainty. Do not fabricate results.
+When the SQL result is grouped/aggregated, summarize the most important groups,
+counts, percentages, and caveats in natural language instead of merely reporting the
+number of result rows.
+If a distribution result is top-N per dimension, say that clearly and summarize the
+leading groups rather than claiming exhaustive coverage.
+Never claim that all categories, plants, cost centers, NULLs, or other values are
+included when the SQL uses ROW_NUMBER filtering, LIMIT, top-N wording, or any capped
+preview. In those cases, explicitly say the result shows the top values only.
 If validated SQL executed successfully and returned zero rows, treat that as a valid
 finding rather than a technical failure unless the critique reports a concrete issue.
 """
