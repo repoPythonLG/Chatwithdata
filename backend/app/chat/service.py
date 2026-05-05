@@ -10,7 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.agent.graph import DataChatAgent
+from app.agent.graph import DataChatAgent, status_event
+from app.agent.qwen_cli_engine import QwenCliEngine, QwenCliResult
 from app.agent.state import AgentState
 from app.agent.text_sanitizer import (
     sanitize_status_events,
@@ -64,12 +65,28 @@ class ChatService:
             conversation_id=conversation.id,
             role="user",
             content=payload.message,
-            payload={"selected_data_sources": payload.selected_data_sources},
+            payload={
+                "selected_data_sources": payload.selected_data_sources,
+                "engine": payload.engine,
+            },
         )
         self.session.add(user_message)
         await self.session.commit()
 
         context = await self._message_context(conversation.id)
+        if payload.engine == "qwen_cli":
+            effective_settings = await RuntimeSettingsService(self.session).get_effective()
+            result = await QwenCliEngine(
+                self.session, settings_from_effective(effective_settings)
+            ).run(
+                question=payload.message,
+                messages=context,
+                selected_data_sources=payload.selected_data_sources,
+            )
+            response = self._response_from_qwen_result(conversation.id, result)
+            await self._store_assistant_message(conversation.id, response)
+            return response
+
         agent = DataChatAgent(self.session, self.llm or await self._runtime_llm())
         final_state = await agent.run(
             AgentState(
@@ -89,7 +106,10 @@ class ChatService:
             conversation_id=conversation.id,
             role="user",
             content=payload.message,
-            payload={"selected_data_sources": payload.selected_data_sources},
+            payload={
+                "selected_data_sources": payload.selected_data_sources,
+                "engine": payload.engine,
+            },
         )
         self.session.add(user_message)
         await self.session.commit()
@@ -97,6 +117,71 @@ class ChatService:
         yield sse_event("conversation", {"conversation_id": conversation.id})
 
         context = await self._message_context(conversation.id)
+        if payload.engine == "qwen_cli":
+            events: list[dict[str, Any]] = []
+
+            def emit_status(step: str, status: str, message: str, **metadata: Any) -> str:
+                event = status_event(step, status, message, **metadata)
+                events.append(event)
+                return sse_event("status", event)
+
+            yield emit_status(
+                "Intelligence Engine",
+                "running",
+                "Preparing Intelligence Engine workspace.",
+            )
+            final_result: QwenCliResult | None = None
+            effective_settings = await RuntimeSettingsService(self.session).get_effective()
+            engine = QwenCliEngine(
+                self.session, settings_from_effective(effective_settings)
+            )
+            async for event in engine.stream(
+                question=payload.message,
+                messages=context,
+                selected_data_sources=payload.selected_data_sources,
+            ):
+                if event.kind == "status":
+                    yield emit_status(
+                        "Intelligence Engine",
+                        "running",
+                        event.message,
+                    )
+                elif event.kind == "output":
+                    yield sse_event("qwen_output", {"content": event.content})
+                elif event.result is not None:
+                    final_result = event.result
+
+            if final_result is None:
+                yield emit_status(
+                    "Intelligence Engine",
+                    "error",
+                    "Intelligence Engine did not produce a result.",
+                )
+                yield sse_event(
+                    "error", {"detail": "Intelligence Engine did not produce a result."}
+                )
+                return
+
+            yield emit_status(
+                "Intelligence Engine",
+                "completed" if final_result.ok else "error",
+                (
+                    "Intelligence Engine completed."
+                    if final_result.ok
+                    else final_result.error or "Intelligence Engine failed."
+                ),
+                exit_code=final_result.exit_code,
+                duration_ms=final_result.duration_ms,
+            )
+            response = self._response_from_qwen_result(conversation.id, final_result, events)
+            for token in self._tokenize_for_stream(response.answer):
+                yield sse_event("token", {"content": token})
+                await asyncio.sleep(0)
+            stored = await self._store_assistant_message(conversation.id, response)
+            response.message_id = stored.id
+            yield sse_event("final", response.model_dump(mode="json"))
+            return
+
         agent = DataChatAgent(self.session, self.llm or await self._runtime_llm())
         seen_events = 0
         final_state: AgentState | None = None
@@ -231,6 +316,47 @@ class ChatService:
             caveats=sanitize_user_text_list(final.get("caveats") or []),
             confidence=final.get("confidence") or "medium",
             status_events=status_events,
+        )
+
+    @staticmethod
+    def _response_from_qwen_result(
+        conversation_id: str,
+        result: QwenCliResult,
+        status_events: list[dict[str, Any]] | None = None,
+    ) -> ChatResponse:
+        caveats = [
+            (
+                "The Intelligence Engine can create and inspect files inside "
+                "its isolated run workspace."
+            ),
+            (
+                "Only copied data files were provided to the engine workspace; "
+                "original source files were not modified."
+            ),
+        ]
+        if result.error:
+            caveats.append(result.error)
+        return ChatResponse(
+            conversation_id=conversation_id,
+            answer=sanitize_user_text(result.answer),
+            reasoning_summary=(
+                "Used the Intelligence Engine against copied data files in an isolated "
+                "workspace. Raw engine output is available in Advanced mode."
+            ),
+            qwen_output=sanitize_user_text(result.raw_output),
+            qwen_workspace=result.workspace,
+            sources=[
+                {
+                    "data_source_id": item.get("id"),
+                    "data_source_name": item.get("name"),
+                    "table": item.get("workspace_path"),
+                    "columns": [],
+                }
+                for item in result.files
+            ],
+            caveats=caveats,
+            confidence="medium" if result.ok else "low",
+            status_events=sanitize_status_events(status_events or []),
         )
 
     @staticmethod

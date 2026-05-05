@@ -78,7 +78,12 @@ export const api = {
     const response = await fetch(`${API_BASE}/chat`, { method: "DELETE" });
     if (!response.ok) throw new Error(response.statusText);
   },
-  chat: (payload: { message: string; conversation_id?: string | null; selected_data_sources?: string[] }) =>
+  chat: (payload: {
+    message: string;
+    conversation_id?: string | null;
+    selected_data_sources?: string[];
+    engine?: "standard" | "qwen_cli";
+  }) =>
     request<ChatResponse>("/chat", { method: "POST", body: JSON.stringify(payload) })
 };
 
@@ -86,12 +91,18 @@ export interface StreamHandlers {
   onConversation?: (conversationId: string) => void;
   onStatus?: (event: StatusEvent) => void;
   onToken?: (token: string) => void;
+  onQwenOutput?: (content: string) => void;
   onFinal?: (response: ChatResponse) => void;
   onError?: (message: string) => void;
 }
 
 export async function streamChat(
-  payload: { message: string; conversation_id?: string | null; selected_data_sources?: string[] },
+  payload: {
+    message: string;
+    conversation_id?: string | null;
+    selected_data_sources?: string[];
+    engine?: "standard" | "qwen_cli";
+  },
   handlers: StreamHandlers
 ) {
   const response = await fetch(`${API_BASE}/chat/stream`, {
@@ -125,6 +136,9 @@ export async function streamChat(
       if (parsed.event === "token") {
         handlers.onToken?.((parsed.data.content as string) ?? "");
       }
+      if (parsed.event === "qwen_output") {
+        handlers.onQwenOutput?.((parsed.data.content as string) ?? "");
+      }
       if (parsed.event === "final") {
         handlers.onFinal?.(parsed.data as unknown as ChatResponse);
       }
@@ -137,10 +151,13 @@ export async function streamChat(
 
 function parseSse(raw: string): { event: string; data: Record<string, unknown> } | null {
   const eventLine = raw.split("\n").find((line) => line.startsWith("event:"));
-  const dataLine = raw.split("\n").find((line) => line.startsWith("data:"));
-  if (!eventLine || !dataLine) return null;
+  const dataLines = raw
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart());
+  if (!eventLine || !dataLines.length) return null;
   return {
     event: eventLine.slice("event:".length).trim(),
-    data: JSON.parse(dataLine.slice("data:".length).trim())
+    data: JSON.parse(dataLines.join("\n"))
   };
 }

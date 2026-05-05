@@ -19,6 +19,12 @@ export interface SettingsOut {
   model_timeout_seconds: number;
   sql_result_row_limit: number;
   python_timeout_seconds: number;
+  qwen_command: string;
+  qwen_model?: string | null;
+  qwen_timeout_seconds: number;
+  qwen_auth_type?: string | null;
+  qwen_approval_mode: string;
+  qwen_use_sandbox: boolean;
 }
 
 export interface DataSource {
@@ -118,6 +124,8 @@ export interface ChatResponse {
   reasoning_summary: string;
   sql_query?: string | null;
   python_code?: string | null;
+  qwen_output?: string | null;
+  qwen_workspace?: string | null;
   artifacts: Artifact[];
   sources: SourceReference[];
   caveats: string[];

@@ -16,6 +16,12 @@ ALLOWED_RUNTIME_KEYS = {
     "model_temperature",
     "model_max_tokens",
     "model_timeout_seconds",
+    "qwen_command",
+    "qwen_model",
+    "qwen_timeout_seconds",
+    "qwen_auth_type",
+    "qwen_approval_mode",
+    "qwen_use_sandbox",
 }
 
 
@@ -46,6 +52,16 @@ class RuntimeSettingsService:
             ),
             "sql_result_row_limit": self.base.sql_result_row_limit,
             "python_timeout_seconds": self.base.python_timeout_seconds,
+            "qwen_command": overrides.get("qwen_command", self.base.qwen_command),
+            "qwen_model": overrides.get("qwen_model", self.base.qwen_model),
+            "qwen_timeout_seconds": overrides.get(
+                "qwen_timeout_seconds", self.base.qwen_timeout_seconds
+            ),
+            "qwen_auth_type": overrides.get("qwen_auth_type", self.base.qwen_auth_type),
+            "qwen_approval_mode": overrides.get(
+                "qwen_approval_mode", self.base.qwen_approval_mode
+            ),
+            "qwen_use_sandbox": overrides.get("qwen_use_sandbox", self.base.qwen_use_sandbox),
         }
 
     async def get_out(self) -> SettingsOut:
@@ -54,7 +70,7 @@ class RuntimeSettingsService:
         return SettingsOut(**values)
 
     async def update(self, payload: SettingsUpdate) -> SettingsOut:
-        values = payload.model_dump(exclude_none=True)
+        values = payload.model_dump(exclude_unset=True)
         for key, value in values.items():
             if key not in ALLOWED_RUNTIME_KEYS:
                 continue
@@ -82,4 +98,14 @@ def settings_from_effective(values: dict[str, Any], base: Settings | None = None
     data["model_timeout_seconds"] = values.get(
         "model_timeout_seconds", base_settings.model_timeout_seconds
     )
+    data["qwen_command"] = values.get("qwen_command", base_settings.qwen_command)
+    data["qwen_model"] = values.get("qwen_model", base_settings.qwen_model)
+    data["qwen_timeout_seconds"] = values.get(
+        "qwen_timeout_seconds", base_settings.qwen_timeout_seconds
+    )
+    data["qwen_auth_type"] = values.get("qwen_auth_type", base_settings.qwen_auth_type)
+    data["qwen_approval_mode"] = values.get(
+        "qwen_approval_mode", base_settings.qwen_approval_mode
+    )
+    data["qwen_use_sandbox"] = values.get("qwen_use_sandbox", base_settings.qwen_use_sandbox)
     return Settings(**data)

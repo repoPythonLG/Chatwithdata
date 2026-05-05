@@ -10,6 +10,7 @@ export interface UiMessage {
   role: "user" | "assistant";
   content: string;
   response?: ChatResponse;
+  qwenOutput?: string;
 }
 
 export function ConversationHistoryPanel({
@@ -44,7 +45,11 @@ export function ConversationHistoryPanel({
       id: message.id,
       role: message.role === "assistant" ? "assistant" : "user",
       content: message.content,
-      response: message.role === "assistant" ? (message.payload as unknown as ChatResponse) : undefined
+      response: message.role === "assistant" ? (message.payload as unknown as ChatResponse) : undefined,
+      qwenOutput:
+        message.role === "assistant"
+          ? ((message.payload as Partial<ChatResponse>).qwen_output ?? undefined)
+          : undefined
     })) satisfies UiMessage[];
     onLoad(conversation, messages);
   }

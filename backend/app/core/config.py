@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     python_timeout_seconds: float = Field(default=20.0, ge=1.0)
     python_max_code_chars: int = Field(default=12000, ge=1000, le=100000)
 
+    qwen_command: str = Field(default="qwen")
+    qwen_model: str | None = Field(default=None)
+    qwen_timeout_seconds: float = Field(default=300.0, ge=10.0)
+    qwen_work_dir: Path = Field(default=Path(".data/qwen-runs"))
+    qwen_auth_type: str | None = Field(default="openai")
+    qwen_approval_mode: str = Field(default="yolo")
+    qwen_use_sandbox: bool = Field(default=True)
+    qwen_max_output_chars: int = Field(default=120000, ge=1000, le=1000000)
+
     metadata_sample_rows: int = Field(default=5, ge=1, le=50)
     metadata_profile_value_limit: int = Field(default=20, ge=1, le=100)
     metadata_cache_seconds: int = Field(default=120, ge=0)
@@ -77,6 +86,7 @@ class Settings(BaseSettings):
         self.app_data_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_db_path.parent.mkdir(parents=True, exist_ok=True)
         self.python_work_dir.mkdir(parents=True, exist_ok=True)
+        self.qwen_work_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

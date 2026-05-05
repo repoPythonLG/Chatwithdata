@@ -1,4 +1,4 @@
-import { Code2, Database, MessageSquareText, ShieldAlert } from "lucide-react";
+import { Code2, Database, MessageSquareText, ShieldAlert, TerminalSquare } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { useAppStore } from "../store/appStore";
@@ -70,7 +70,32 @@ export function AnswerRenderer({ response }: { response: ChatResponse }) {
           </ul>
         </Card>
       ) : null}
+
+      {showAdvancedDetails && response.qwen_output ? (
+        <QwenOutputPanel output={response.qwen_output} />
+      ) : null}
     </div>
+  );
+}
+
+export function QwenOutputPanel({
+  output
+}: {
+  output: string;
+}) {
+  return (
+    <Card className="space-y-3">
+      <div className="flex items-center gap-2">
+        <TerminalSquare className="h-4 w-4 text-harbor-500" />
+        <h3 className="font-semibold">Intelligence Engine output</h3>
+      </div>
+      <p className="text-xs text-ink-500 dark:text-ink-100">
+        Data-only run: enabled. Only copied, selected data sources are provided to this engine.
+      </p>
+      <pre className="max-h-96 overflow-auto rounded-2xl bg-ink-950 p-4 text-xs leading-5 text-ink-300">
+        <code>{output}</code>
+      </pre>
+    </Card>
   );
 }
 

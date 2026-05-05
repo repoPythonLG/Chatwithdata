@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Database, Eye, Loader2 } from "lucide-react";
 
 import { api, streamChat } from "../api/client";
-import { AnswerRenderer } from "../components/AnswerRenderer";
+import { AnswerRenderer, QwenOutputPanel } from "../components/AnswerRenderer";
 import {
   ConversationHistoryPanel,
   type UiMessage
@@ -21,6 +21,8 @@ export function ChatPage() {
   const shouldFollowOutputRef = useRef(true);
   const datasources = useQuery({ queryKey: ["datasources"], queryFn: api.datasources });
   const selectedDataSources = useAppStore((state) => state.selectedDataSources);
+  const analysisEngine = useAppStore((state) => state.analysisEngine);
+  const responseMode = useAppStore((state) => state.responseMode);
   const setSelectedDataSources = useAppStore((state) => state.setSelectedDataSources);
   const toggleDataSource = useAppStore((state) => state.toggleDataSource);
   const conversationId = useAppStore((state) => state.conversationId);
@@ -90,7 +92,8 @@ export function ChatPage() {
           conversation_id: conversationId,
           selected_data_sources: effectiveSelectedDataSources.length
             ? effectiveSelectedDataSources
-            : undefined
+            : undefined,
+          engine: analysisEngine
         },
         {
           onConversation: setConversationId,
@@ -100,6 +103,14 @@ export function ChatPage() {
               current.map((message) =>
                 message.id === assistantId
                   ? { ...message, content: `${message.content}${token}` }
+                  : message
+              )
+            ),
+          onQwenOutput: (content) =>
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === assistantId
+                  ? { ...message, qwenOutput: `${message.qwenOutput ?? ""}${content}` }
                   : message
               )
             ),
@@ -241,7 +252,7 @@ export function ChatPage() {
                 ) : message.response ? (
                   <AnswerRenderer response={message.response} />
                 ) : (
-                  <Card>
+                  <Card className="space-y-4">
                     {message.content ? (
                       <p className="whitespace-pre-wrap leading-7">{message.content}</p>
                     ) : (
@@ -250,6 +261,9 @@ export function ChatPage() {
                         Waiting for streamed response…
                       </div>
                     )}
+                    {responseMode === "advanced" && message.qwenOutput ? (
+                      <QwenOutputPanel output={message.qwenOutput} />
+                    ) : null}
                   </Card>
                 )}
               </div>

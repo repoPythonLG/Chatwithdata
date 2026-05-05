@@ -36,6 +36,7 @@ export function StatusTimeline({ events }: { events: StatusEvent[] }) {
     "Generating code",
     "Validating",
     "Executing",
+    "Intelligence Engine",
     "Critiquing answer",
     "Finalizing"
   ].filter((step) => latestByStep[step]);

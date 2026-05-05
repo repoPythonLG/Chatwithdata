@@ -12,12 +12,20 @@ export function SettingsPage() {
   const queryClient = useQueryClient();
   const responseMode = useAppStore((state) => state.responseMode);
   const setResponseMode = useAppStore((state) => state.setResponseMode);
+  const analysisEngine = useAppStore((state) => state.analysisEngine);
+  const setAnalysisEngine = useAppStore((state) => state.setAnalysisEngine);
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
   const [modelName, setModelName] = useState("qwen3-coder-next");
   const [apiKey, setApiKey] = useState("");
   const [temperature, setTemperature] = useState("0.1");
   const [maxTokens, setMaxTokens] = useState("4096");
+  const [qwenCommand, setQwenCommand] = useState("qwen");
+  const [qwenModel, setQwenModel] = useState("");
+  const [qwenTimeout, setQwenTimeout] = useState("300");
+  const [qwenAuthType, setQwenAuthType] = useState("openai");
+  const [qwenApprovalMode, setQwenApprovalMode] = useState("yolo");
+  const [qwenUseSandbox, setQwenUseSandbox] = useState(true);
 
   useEffect(() => {
     if (!settings.data) return;
@@ -25,6 +33,12 @@ export function SettingsPage() {
     setModelName(settings.data.model_name);
     setTemperature(String(settings.data.model_temperature));
     setMaxTokens(String(settings.data.model_max_tokens));
+    setQwenCommand(settings.data.qwen_command || "qwen");
+    setQwenModel(settings.data.qwen_model ?? "");
+    setQwenTimeout(String(settings.data.qwen_timeout_seconds));
+    setQwenAuthType(settings.data.qwen_auth_type || "openai");
+    setQwenApprovalMode(settings.data.qwen_approval_mode || "yolo");
+    setQwenUseSandbox(settings.data.qwen_use_sandbox);
   }, [settings.data]);
 
   const update = useMutation({
@@ -32,15 +46,25 @@ export function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] })
   });
 
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    update.mutate({
+  function settingsPayload() {
+    return {
       llm_base_url: llmBaseUrl,
       model_name: modelName,
       ...(apiKey ? { openai_api_key: apiKey } : {}),
       model_temperature: Number(temperature),
-      model_max_tokens: Number(maxTokens)
-    });
+      model_max_tokens: Number(maxTokens),
+      qwen_command: qwenCommand,
+      qwen_model: qwenModel.trim() ? qwenModel.trim() : null,
+      qwen_timeout_seconds: Number(qwenTimeout),
+      qwen_auth_type: qwenAuthType.trim() ? qwenAuthType.trim() : null,
+      qwen_approval_mode: qwenApprovalMode,
+      qwen_use_sandbox: qwenUseSandbox
+    };
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    update.mutate(settingsPayload());
   }
 
   return (
@@ -100,6 +124,113 @@ export function SettingsPage() {
             </div>
           </form>
           {update.error ? <p className="mt-3 text-sm text-red-600">{update.error.message}</p> : null}
+        </Card>
+
+        <Card>
+          <div className="mb-5">
+            <p className="text-xs uppercase tracking-[0.24em] text-ink-500 dark:text-ink-100">
+              Analysis engine
+            </p>
+            <h2 className="font-display text-2xl font-bold">Intelligence Engine</h2>
+            <p className="mt-2 text-sm text-ink-500 dark:text-ink-100">
+              Choose whether chat requests use the managed SQL/LangGraph agent or an
+              autonomous file-workspace engine against copied data files.
+            </p>
+          </div>
+          <div className="mb-5 grid gap-3 md:grid-cols-2">
+            <button
+              className={`rounded-3xl border p-4 text-left transition ${
+                analysisEngine === "standard"
+                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
+                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+              }`}
+              onClick={() => setAnalysisEngine("standard")}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Standard</span>
+                {analysisEngine === "standard" ? (
+                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
+                    Active
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
+                Uses the governed SQL-first LangGraph workflow with validation and bounded retries.
+              </p>
+            </button>
+            <button
+              className={`rounded-3xl border p-4 text-left transition ${
+                analysisEngine === "qwen_cli"
+                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
+                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
+              }`}
+              onClick={() => {
+                setAnalysisEngine("qwen_cli");
+                setResponseMode("advanced");
+              }}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Advanced</span>
+                {analysisEngine === "qwen_cli" ? (
+                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
+                    Active
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
+                Runs an autonomous analysis engine inside a copied, data-only workspace
+                and shows raw engine output in Advanced response mode.
+              </p>
+            </button>
+          </div>
+          <div className="mb-3">
+            <Input
+              aria-label="Engine executable path"
+              placeholder="Engine executable path, for example /opt/homebrew/bin/qwen"
+              value={qwenCommand}
+              onChange={(event) => setQwenCommand(event.target.value)}
+            />
+            <p className="mt-2 text-xs leading-5 text-ink-500 dark:text-ink-100">
+              Used only to start Advanced mode. This path is not shown in chat output.
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Input
+              aria-label="Engine timeout seconds"
+              placeholder="Engine timeout seconds"
+              value={qwenTimeout}
+              onChange={(event) => setQwenTimeout(event.target.value)}
+            />
+            <Input
+              aria-label="Engine auth type"
+              placeholder="Engine auth type, e.g. openai"
+              value={qwenAuthType}
+              onChange={(event) => setQwenAuthType(event.target.value)}
+            />
+            <Input
+              aria-label="Engine approval mode"
+              placeholder="Engine approval mode"
+              value={qwenApprovalMode}
+              onChange={(event) => setQwenApprovalMode(event.target.value)}
+            />
+          </div>
+          <label className="mt-4 flex items-center gap-3 rounded-2xl border border-ink-100 bg-white/50 p-3 text-sm dark:border-white/10 dark:bg-white/5">
+            <input
+              checked={qwenUseSandbox}
+              onChange={(event) => setQwenUseSandbox(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              Use the engine sandbox when the runtime supports it.
+            </span>
+          </label>
+          <div className="mt-4 flex justify-end">
+            <Button disabled={update.isPending} onClick={() => update.mutate(settingsPayload())}>
+              Save engine settings
+            </Button>
+          </div>
         </Card>
 
         <Card>
