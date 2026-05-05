@@ -2,7 +2,7 @@
 name = "corporate-data-chat-backend"
 version = "0.1.0"
 description = "FastAPI backend for a corporate AI data-chat application over SQLite and Excel sources."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "aiosqlite>=0.20.0",
   "duckdb>=1.0.0",
@@ -43,7 +43,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

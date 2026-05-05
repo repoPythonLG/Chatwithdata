@@ -103,27 +103,37 @@ class QwenCliEngine:
             return
 
         try:
-            async with asyncio.timeout(self.settings.qwen_timeout_seconds):
-                assert process.stdout is not None
-                while True:
-                    chunk = await process.stdout.readline()
-                    if not chunk:
-                        break
-                    text = self._clean_output(chunk.decode("utf-8", errors="replace"))
-                    if not text:
-                        continue
-                    if output_chars < self.settings.qwen_max_output_chars:
-                        remaining = self.settings.qwen_max_output_chars - output_chars
-                        stored = text[:remaining]
-                        output_parts.append(stored)
-                        output_chars += len(stored)
-                        if len(text) > remaining:
-                            truncated = True
-                    else:
+            assert process.stdout is not None
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.settings.qwen_timeout_seconds
+            while True:
+                remaining_seconds = deadline - loop.time()
+                if remaining_seconds <= 0:
+                    raise asyncio.TimeoutError
+                chunk = await asyncio.wait_for(
+                    process.stdout.readline(),
+                    timeout=remaining_seconds,
+                )
+                if not chunk:
+                    break
+                text = self._clean_output(chunk.decode("utf-8", errors="replace"))
+                if not text:
+                    continue
+                if output_chars < self.settings.qwen_max_output_chars:
+                    remaining_chars = self.settings.qwen_max_output_chars - output_chars
+                    stored = text[:remaining_chars]
+                    output_parts.append(stored)
+                    output_chars += len(stored)
+                    if len(text) > remaining_chars:
                         truncated = True
-                    yield QwenCliEvent(kind="output", content=text)
-                exit_code = await process.wait()
-        except TimeoutError:
+                else:
+                    truncated = True
+                yield QwenCliEvent(kind="output", content=text)
+            remaining_seconds = deadline - loop.time()
+            if remaining_seconds <= 0:
+                raise asyncio.TimeoutError
+            exit_code = await asyncio.wait_for(process.wait(), timeout=remaining_seconds)
+        except asyncio.TimeoutError:
             process.kill()
             await process.wait()
             raw_output = "".join(output_parts)
