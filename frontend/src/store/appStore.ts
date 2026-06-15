@@ -32,8 +32,9 @@ function saveResponseMode(responseMode: ResponseMode) {
 }
 
 function readAnalysisEngine(): AnalysisEngine {
-  if (typeof window === "undefined") return "standard";
-  return window.localStorage.getItem("analysisEngine") === "qwen_cli" ? "qwen_cli" : "standard";
+  if (typeof window === "undefined") return "qwen_cli";
+  window.localStorage.setItem("analysisEngine", "qwen_cli");
+  return "qwen_cli";
 }
 
 function saveAnalysisEngine(analysisEngine: AnalysisEngine) {

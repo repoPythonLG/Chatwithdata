@@ -1,6 +1,6 @@
-# Corporate Data Chat
+# Chat with Contracts
 
-Production-grade starter for an AI data analyst chat application over changing local SQLite databases, Excel workbooks, and CSV files.
+Production-grade contract chat application over a shared Excel-derived contract database plus per-user uploaded contract documents.
 
 The app uses:
 
@@ -49,7 +49,33 @@ npm run dev
 
 3. Open `http://localhost:5173`.
 
-4. In Settings, browse for or add one or more local `.sqlite`, `.db`, `.sqlite3`, `.xlsx`, `.xlsm`, `.xls`, `.csv`, or `.tsv` files.
+4. Sign in as an administrator, upload the contract database workbook in Settings, then ask questions in Chat. Standard users only see the chat workspace and their own uploaded documents.
+
+## Offline Deployment Bundle
+
+Build the offline bundle on an internet-connected Python 3.10 machine that matches
+the target OS/CPU architecture:
+
+```bash
+python scripts/build_offline_bundle.py --chunk-mb 95 --easyocr-languages en
+```
+
+The builder downloads runtime Python wheels plus Docling and EasyOCR model assets,
+then creates GitHub-friendly chunks under `offline/bundle/chunks/`, each below the
+configured chunk size. Commit `offline/bundle/manifest.json` and
+`offline/bundle/chunks/*.part*` if the offline bundle must live in GitHub.
+
+On the offline target:
+
+```bash
+python scripts/install_offline_bundle.py
+```
+
+The installer verifies checksums, installs backend dependencies using only the
+local wheelhouse, copies Docling/EasyOCR model assets into
+`backend/.data/offline-assets/`, and writes the local model paths into
+`backend/.env`. Runtime extraction is offline-only: EasyOCR is called with
+`download_enabled=False`, and Docling uses the configured local artifact path.
 
 ## Cloudera Application Startup
 

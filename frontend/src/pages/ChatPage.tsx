@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Database, Eye, Loader2 } from "lucide-react";
+import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowUp, Database, Eye, FileText, Loader2, Trash2, Upload } from "lucide-react";
 
 import { api, streamChat } from "../api/client";
 import { AnswerRenderer, QwenOutputPanel } from "../components/AnswerRenderer";
@@ -18,13 +18,10 @@ import type { ChatResponse, Conversation, DataSource, StatusEvent } from "../typ
 export function ChatPage() {
   const queryClient = useQueryClient();
   const messagesViewportRef = useRef<HTMLDivElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
   const shouldFollowOutputRef = useRef(true);
-  const datasources = useQuery({ queryKey: ["datasources"], queryFn: api.datasources });
-  const selectedDataSources = useAppStore((state) => state.selectedDataSources);
-  const analysisEngine = useAppStore((state) => state.analysisEngine);
+  const contracts = useQuery({ queryKey: ["contracts"], queryFn: api.contractWorkspace });
   const responseMode = useAppStore((state) => state.responseMode);
-  const setSelectedDataSources = useAppStore((state) => state.setSelectedDataSources);
-  const toggleDataSource = useAppStore((state) => state.toggleDataSource);
   const conversationId = useAppStore((state) => state.conversationId);
   const setConversationId = useAppStore((state) => state.setConversationId);
   const [input, setInput] = useState("");
@@ -32,21 +29,25 @@ export function ChatPage() {
   const [events, setEvents] = useState<StatusEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [previewSource, setPreviewSource] = useState<DataSource | null>(null);
-  const activeSources = useMemo(
-    () => datasources.data?.filter((source) => source.status === "active") ?? [],
-    [datasources.data]
-  );
-  const activeSourceIds = useMemo(() => new Set(activeSources.map((source) => source.id)), [activeSources]);
-  const effectiveSelectedDataSources = useMemo(
-    () => selectedDataSources.filter((id) => activeSourceIds.has(id)),
-    [activeSourceIds, selectedDataSources]
-  );
+  const contractDatabase = contracts.data?.database ?? null;
+  const contractDocuments = contracts.data?.documents ?? [];
 
-  useEffect(() => {
-    if (!datasources.data) return;
-    if (effectiveSelectedDataSources.length === selectedDataSources.length) return;
-    setSelectedDataSources(effectiveSelectedDataSources);
-  }, [datasources.data, effectiveSelectedDataSources, selectedDataSources, setSelectedDataSources]);
+  const refreshContracts = () => {
+    queryClient.invalidateQueries({ queryKey: ["contracts"] });
+  };
+
+  const uploadDocuments = useMutation({
+    mutationFn: api.uploadContractDocuments,
+    onSuccess: () => {
+      if (documentInputRef.current) documentInputRef.current.value = "";
+      refreshContracts();
+    }
+  });
+
+  const removeDocument = useMutation({
+    mutationFn: api.deleteContractDocument,
+    onSuccess: refreshContracts
+  });
 
   useEffect(() => {
     if (!shouldFollowOutputRef.current) return;
@@ -62,6 +63,12 @@ export function ChatPage() {
     const viewport = messagesViewportRef.current;
     if (!viewport) return;
     shouldFollowOutputRef.current = isNearBottom(viewport);
+  }
+
+  function uploadSelectedDocuments(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    uploadDocuments.mutate(files);
   }
 
   async function submit(event?: { preventDefault: () => void }) {
@@ -90,10 +97,8 @@ export function ChatPage() {
         {
           message: question,
           conversation_id: conversationId,
-          selected_data_sources: effectiveSelectedDataSources.length
-            ? effectiveSelectedDataSources
-            : undefined,
-          engine: analysisEngine
+          selected_data_sources: contractDatabase ? [contractDatabase.id] : undefined,
+          engine: "qwen_cli"
         },
         {
           onConversation: setConversationId,
@@ -149,6 +154,9 @@ export function ChatPage() {
     setMessages([]);
     setEvents([]);
     shouldFollowOutputRef.current = true;
+    void api.clearContractDocuments().finally(() => {
+      queryClient.invalidateQueries({ queryKey: ["contracts"] });
+    });
   }
 
   function loadConversation(conversation: Conversation, loadedMessages: UiMessage[]) {
@@ -168,49 +176,85 @@ export function ChatPage() {
           onNew={newConversation}
         />
         <Card className="space-y-3 p-4">
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-harbor-500" />
-            <h2 className="font-semibold">Active sources</h2>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-harbor-500" />
+              <h2 className="font-semibold">Contract workspace</h2>
+            </div>
+            <Button
+              className="h-9 px-3 text-xs"
+              disabled={uploadDocuments.isPending}
+              onClick={() => documentInputRef.current?.click()}
+              type="button"
+              variant="ghost"
+            >
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+              Attach
+            </Button>
           </div>
           <div className="space-y-2">
-            {activeSources.map((source) => {
-              const selected =
-                effectiveSelectedDataSources.length === 0 ||
-                effectiveSelectedDataSources.includes(source.id);
-              return (
-                <div
-                  className={[
-                    "flex w-full items-center gap-2 rounded-2xl border p-2 text-sm transition",
-                    selected
-                      ? "border-harbor-400 bg-harbor-400/10"
-                      : "border-ink-100 bg-white/40 opacity-70 dark:border-white/10 dark:bg-white/5"
-                  ].join(" ")}
-                  key={source.id}
+            {contractDatabase ? (
+              <div
+                className="flex w-full items-center gap-2 rounded-2xl border border-harbor-400 bg-harbor-400/10 p-2 text-sm"
+                key={contractDatabase.id}
+              >
+                <div className="min-w-0 flex-1 p-1">
+                  <span className="block truncate font-semibold">{contractDatabase.name}</span>
+                  <span className="text-xs text-ink-500 dark:text-ink-100">
+                    Structured SQLite database
+                  </span>
+                </div>
+                <button
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-ink-100 bg-white/70 text-harbor-700 transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-harbor-300 dark:hover:bg-white/10"
+                  onClick={() => setPreviewSource(contractDatabase)}
+                  title="Preview contract database"
+                  type="button"
                 >
+                  <Eye className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <p className="rounded-2xl border border-dashed border-ink-100 p-3 text-sm text-ink-500 dark:border-white/10 dark:text-ink-100">
+                Upload an Excel contract register in Settings before chatting.
+              </p>
+            )}
+          </div>
+          {uploadDocuments.error ? (
+            <p className="rounded-2xl bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-200">
+              {uploadDocuments.error.message}
+            </p>
+          ) : null}
+          {contractDocuments.length ? (
+            <div className="space-y-2 border-t border-ink-100 pt-3 dark:border-white/10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ink-500 dark:text-ink-100">
+                Documents
+              </p>
+              {contractDocuments.map((document) => (
+                <div
+                  className="flex items-start gap-2 rounded-2xl bg-white/55 p-2 text-xs dark:bg-white/5"
+                  key={document.id}
+                >
+                  <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-harbor-500" />
+                  <span className="line-clamp-2 min-w-0 flex-1">{document.filename}</span>
                   <button
-                    className="min-w-0 flex-1 p-1 text-left"
-                    onClick={() => toggleDataSource(source.id)}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-500 transition hover:bg-white hover:text-red-600 dark:text-ink-100 dark:hover:bg-white/10"
+                    disabled={removeDocument.isPending}
+                    onClick={() => removeDocument.mutate(document.id)}
+                    title={`Remove ${document.filename}`}
                     type="button"
                   >
-                    <span className="block truncate font-semibold">{source.name}</span>
-                    <span className="text-xs text-ink-500 dark:text-ink-100">
-                      {source.source_type}
-                    </span>
-                  </button>
-                  <button
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-ink-100 bg-white/70 text-harbor-700 transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-harbor-300 dark:hover:bg-white/10"
-                    onClick={() => setPreviewSource(source)}
-                    title={`Preview ${source.name}`}
-                    type="button"
-                  >
-                    <Eye className="h-4 w-4" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-dashed border-ink-100 p-3 text-sm text-ink-500 dark:border-white/10 dark:text-ink-100">
+              Attach one or more contract documents from this chat window.
+            </p>
+          )}
           <p className="text-xs text-ink-500 dark:text-ink-100">
-            No selection means the agent may use all active sources.
+            New conversation clears uploaded contract documents.
           </p>
         </Card>
       </aside>
@@ -220,7 +264,7 @@ export function ChatPage() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.28em] text-harbor-700 dark:text-harbor-400">
-                AI data analyst
+                Contract intelligence
               </p>
             </div>
             <Badge tone={isStreaming ? "warn" : "good"}>
@@ -278,10 +322,37 @@ export function ChatPage() {
         ) : null}
 
         <form className="border-t border-ink-100 p-5 dark:border-white/10" onSubmit={submit}>
+          <input
+            ref={documentInputRef}
+            className="hidden"
+            type="file"
+            multiple
+            accept=".pdf,.doc,.docx,.pptx,.html,.htm,.txt,.text,.md,.rtf,.json,.csv,.xls,.xlsx,.xlsm,.png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp"
+            onChange={uploadSelectedDocuments}
+          />
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <Button
+              className="px-3 py-2 text-sm"
+              disabled={uploadDocuments.isPending}
+              onClick={() => documentInputRef.current?.click()}
+              type="button"
+              variant="ghost"
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              {uploadDocuments.isPending ? "Uploading documents…" : "Attach contract documents"}
+            </Button>
+            <span className="text-xs text-ink-500 dark:text-ink-100">
+              {contractDocuments.length
+                ? `${contractDocuments.length} document${
+                    contractDocuments.length === 1 ? "" : "s"
+                  } attached for this chat`
+                : "Optional: attach PDFs, Word files, spreadsheets, CSVs, or text files"}
+            </span>
+          </div>
           <div className="flex gap-3">
             <Textarea
               className="min-h-[76px] flex-1"
-              placeholder="Ask for rankings, trends, joins, quality checks, or a chart…"
+              placeholder="Ask about contracts, suppliers, dates, obligations, risks, or uploaded documents…"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
@@ -307,20 +378,20 @@ function isNearBottom(element: HTMLElement) {
 
 function EmptyState({ onExample }: { onExample: (value: string) => void }) {
   const examples = [
-    "Which customers had the highest revenue last quarter?",
-    "Find data-quality issues across sheets and explain the impact.",
-    "Plot monthly order volume and flag unusual changes.",
-    "Join orders to customers and rank regions by average order value."
+    "Which contracts expire in the next 90 days?",
+    "Summarize high-risk suppliers and explain why they are high risk.",
+    "Compare contract value by business unit and contract owner.",
+    "Use the uploaded contract documents to identify unusual obligations."
   ];
 
   return (
     <div className="grid min-h-[300px] place-items-center">
       <div className="max-w-3xl text-center">
         <p className="text-xs uppercase tracking-[0.28em] text-brass-700 dark:text-brass-300">
-          Start with a business question
+          Start with a contract question
         </p>
         <h2 className="mt-3 font-display text-3xl font-bold tracking-tight">
-          Your local data, one careful analyst.
+          Your contract database, one careful analyst.
         </h2>
         <div className="mt-6 grid gap-3 md:grid-cols-2">
           {examples.map((example) => (

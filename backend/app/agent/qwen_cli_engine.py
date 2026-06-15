@@ -17,9 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
-from app.db.models import DataSource, TableMetadata
+from app.db.models import ContractDocument, DataSource, TableMetadata
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+CONTRACT_DB_ROLE = "contract_database"
 
 
 @dataclass
@@ -46,9 +47,15 @@ class QwenCliEvent:
 class QwenCliEngine:
     """Run the configured CLI engine against copied data files in an isolated workspace."""
 
-    def __init__(self, session: AsyncSession, settings: Settings | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        settings: Settings | None = None,
+        user_id: str | None = None,
+    ):
         self.session = session
         self.settings = settings or get_settings()
+        self.user_id = user_id
 
     async def stream(
         self,
@@ -65,8 +72,11 @@ class QwenCliEngine:
 
         sources = await self._load_sources(selected_data_sources)
         copied_files = self._copy_sources(sources, data_dir)
-        manifest = self._write_manifest(data_dir, copied_files, sources)
-        prompt = self._build_prompt(question, messages, copied_files, manifest)
+        documents = await self._load_contract_documents()
+        copied_documents = self._copy_contract_documents(documents, data_dir)
+        approved_files = [*copied_files, *copied_documents]
+        manifest = self._write_manifest(data_dir, copied_files, copied_documents, sources)
+        prompt = self._build_prompt(question, messages, approved_files, manifest)
         prompt_path = data_dir / "PROMPT.md"
         prompt_path.write_text(prompt, encoding="utf-8")
 
@@ -95,7 +105,7 @@ class QwenCliEngine:
                 raw_output="",
                 workspace=str(data_dir),
                 command=[],
-                files=copied_files,
+                files=approved_files,
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 error=str(exc),
             )
@@ -143,7 +153,7 @@ class QwenCliEngine:
                 raw_output=raw_output,
                 workspace=str(data_dir),
                 command=[],
-                files=copied_files,
+                files=approved_files,
                 exit_code=process.returncode,
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 error="Intelligence Engine timed out.",
@@ -171,7 +181,7 @@ class QwenCliEngine:
             raw_output=raw_output,
             workspace=str(data_dir),
             command=[],
-            files=copied_files,
+            files=approved_files,
             exit_code=exit_code,
             duration_ms=int((time.perf_counter() - started) * 1000),
             error=None if ok else f"Intelligence Engine exited with code {exit_code}.",
@@ -210,10 +220,22 @@ class QwenCliEngine:
             .where(DataSource.status == "active")
             .order_by(DataSource.name)
         )
-        if selected_data_sources:
-            statement = statement.where(DataSource.id.in_(selected_data_sources))
         result = await self.session.execute(statement)
-        return list(result.scalars().unique().all())
+        sources = list(result.scalars().unique().all())
+        if selected_data_sources:
+            selected = set(selected_data_sources)
+            return [source for source in sources if source.id in selected]
+        contract_sources = [
+            source for source in sources if (source.profile or {}).get("role") == CONTRACT_DB_ROLE
+        ]
+        return contract_sources
+
+    async def _load_contract_documents(self) -> list[ContractDocument]:
+        statement = select(ContractDocument).order_by(ContractDocument.created_at)
+        if self.user_id:
+            statement = statement.where(ContractDocument.user_id == self.user_id)
+        result = await self.session.execute(statement)
+        return list(result.scalars().all())
 
     def _copy_sources(
         self, sources: list[DataSource], data_dir: Path
@@ -253,22 +275,64 @@ class QwenCliEngine:
             )
         return copied
 
+    def _copy_contract_documents(
+        self, documents: list[ContractDocument], data_dir: Path
+    ) -> list[dict[str, Any]]:
+        copied: list[dict[str, Any]] = []
+        document_dir = data_dir / "contract_documents"
+        document_dir.mkdir(exist_ok=True)
+        for index, document in enumerate(documents, start=1):
+            source_path = Path(document.path)
+            safe_name = self._safe_filename(document.filename or document.name)
+            target = document_dir / f"{index:02d}_{safe_name}"
+            status = "copied"
+            error = None
+            if source_path.exists():
+                shutil.copy2(source_path, target)
+            else:
+                status = "missing"
+                error = f"Contract document path does not exist: {document.path}"
+
+            text_workspace_path = None
+            if document.extracted_text_path:
+                extracted_path = Path(document.extracted_text_path)
+                if extracted_path.exists():
+                    text_target = document_dir / f"{index:02d}_{safe_name}.extracted.txt"
+                    shutil.copy2(extracted_path, text_target)
+                    text_workspace_path = str(text_target.relative_to(data_dir))
+
+            copied.append(
+                {
+                    "id": document.id,
+                    "name": document.name,
+                    "source_type": "contract_document",
+                    "original_path": document.path,
+                    "workspace_path": str(target.relative_to(data_dir)),
+                    "extracted_text_workspace_path": text_workspace_path,
+                    "status": status,
+                    "error": error,
+                    "tables": [],
+                }
+            )
+        return copied
+
     def _write_manifest(
         self,
         data_dir: Path,
         copied_files: list[dict[str, Any]],
+        copied_documents: list[dict[str, Any]],
         sources: list[DataSource],
     ) -> Path:
         lines = [
-            "# Data-Only Analysis Workspace",
+            "# Contract Analysis Workspace",
             "",
             "This folder contains the only approved files for this analysis run.",
-            "Only answer questions about these data files and their tables/sheets.",
+            "Only answer questions about the contract database and uploaded contract documents.",
             "Do not inspect parent folders, home folders, system folders, network locations, or",
             "any path outside this current working directory.",
             "Write scratch outputs only under `scratch/`.",
             "",
-            "## Files",
+            "## Contract database",
             "",
         ]
         for item in copied_files:
@@ -282,7 +346,16 @@ class QwenCliEngine:
                     f"columns={columns}"
                 )
         if not sources:
-            lines.append("- No active data sources were selected or available.")
+            lines.append("- No contract database is configured.")
+        lines.extend(["", "## Uploaded contract documents", ""])
+        if not copied_documents:
+            lines.append("- No uploaded contract documents are attached to this chat.")
+        for item in copied_documents:
+            lines.append(f"- `{item['workspace_path']}`: {item['name']}")
+            if item.get("extracted_text_workspace_path"):
+                lines.append(f"  - Extracted text: `{item['extracted_text_workspace_path']}`")
+            if item["status"] != "copied":
+                lines.append(f"  - Warning: {item['error']}")
         manifest = data_dir / "DATA_MANIFEST.md"
         manifest.write_text("\n".join(lines), encoding="utf-8")
         (data_dir / "scratch").mkdir(exist_ok=True)
@@ -305,21 +378,24 @@ class QwenCliEngine:
         )
         if not file_list:
             file_list = "- No copied data files are available."
-        return f"""You are the Advanced Intelligence Engine inside Chat with Data.
+        return f"""You are the Advanced Intelligence Engine inside Chat with Contracts.
 
 The user asked:
 {question}
 
 You are running from a data-only working directory. The only approved inputs are
 the files listed below and the local manifest `{manifest.name}`. The files may be
-SQLite databases, Excel workbooks, CSV files, or a combination of those formats.
+the generated SQLite contract database and uploaded contract documents.
 
 Hard boundaries:
-- Answer only questions about the copied datasets, their schema, their content,
-  their relationships, or analysis derived from them.
+- Answer only questions about contracts using the generated contract database and,
+  when present, the uploaded contract documents.
+- Prefer querying the SQLite contract database for structured facts. Use uploaded
+  contract documents only as supporting evidence or when the question requires
+  language/details that are not in the database.
 - If the user asks about the local filesystem, parent folders, system state,
   installed software, secrets, credentials, source code, unrelated files, or any
-  non-data task, do not perform it. Ask the user to provide a data question
+  non-contract task, do not perform it. Ask the user to provide a contract question
   instead.
 - Do not inspect `..`, absolute paths, home folders, system folders, network
   locations, hidden configuration folders, or any file outside the current
@@ -328,8 +404,7 @@ Hard boundaries:
 - Do not modify original source files. Use `./scratch` only for temporary
   scripts, charts, or derived outputs.
 - Prefer deterministic local analysis using SQL/Python over guessing. For SQLite,
-  use read-only connections where possible. For Excel/CSV, use local Python data
-  tools available in the environment.
+  use read-only connections where possible.
 
 Available copied files:
 {file_list}
@@ -339,7 +414,11 @@ Recent conversation context:
 
 Answer the user's question clearly for a corporate business user. If you run code,
 summarize the important steps and include concise tables or chart descriptions when
-useful. End with a section that starts exactly with `FINAL ANSWER:`."""
+useful. End with a section that starts exactly with `FINAL ANSWER:`. The
+`FINAL ANSWER:` section must contain the complete user-facing answer, including
+any tables, recommendations, caveats, or document-specific clauses needed to
+answer the question. Do not place the detailed answer only before `FINAL ANSWER:`.
+Do not emit XML-style file tags such as `<file>` or `</file>`."""
 
     def _build_command(self, prompt: str) -> list[str]:
         command = self._command_from_setting(self.settings.qwen_command)
@@ -374,17 +453,20 @@ useful. End with a section that starts exactly with `FINAL ANSWER:`."""
         env["OPENAI_BASE_URL"] = self.settings.llm_base_url
         env["OPENAI_API_KEY"] = self.settings.openai_api_key
         env["OPENAI_MODEL"] = self.settings.qwen_model or self.settings.model_name
+        env["DASHSCOPE_API_KEY"] = self.settings.openai_api_key
+        env["QWEN_API_KEY"] = self.settings.openai_api_key
         return env
 
     @staticmethod
     def _data_only_system_prompt() -> str:
         return (
-            "You are a data-only analysis engine for Chat with Data. "
-            "Use only the current working directory and the copied datasets inside it. "
+            "You are a contract-only analysis engine for Chat with Contracts. "
+            "Use only the current working directory and the copied contract files inside it. "
             "Do not inspect parent directories, home directories, system directories, "
             "network locations, credentials, source code, or unrelated files. "
-            "Answer only questions about the provided SQLite, Excel, or CSV datasets. "
-            "For any non-data request, ask the user to provide a dataset question."
+            "Answer only questions about the generated SQLite contract database and "
+            "uploaded contract documents. For any non-contract request, ask the user "
+            "to provide a contract question."
         )
 
     @staticmethod
@@ -398,7 +480,19 @@ useful. End with a section that starts exactly with `FINAL ANSWER:`."""
 
     @staticmethod
     def _extract_answer(raw_output: str) -> str:
+        raw_output = QwenCliEngine._strip_engine_artifacts(raw_output)
         marker = "FINAL ANSWER:"
         if marker not in raw_output:
             return raw_output.strip()
-        return raw_output.rsplit(marker, 1)[-1].strip()
+        extracted = raw_output.rsplit(marker, 1)[-1].strip()
+        return QwenCliEngine._strip_engine_artifacts(extracted)
+
+    @staticmethod
+    def _strip_engine_artifacts(text: str) -> str:
+        return (
+            text.replace("<file>", "")
+            .replace("</file>", "")
+            .replace("<result>", "")
+            .replace("</result>", "")
+            .strip()
+        )

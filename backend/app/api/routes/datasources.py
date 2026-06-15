@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import admin_user, current_user
 from app.core.config import get_settings
 from app.core.security import safe_filename
 from app.datasources.catalog import DataSourceCatalog
 from app.datasources.query_engine import QueryEngine
+from app.db.models import User
 from app.db.session import get_session
 from app.schemas.datasource import DataSourceCreate, DataSourceOut, TablePreviewOut
 
@@ -35,13 +37,18 @@ SOURCE_TYPE_BY_EXTENSION = {
 
 
 @router.get("", response_model=list[DataSourceOut])
-async def list_datasources(session: AsyncSession = Depends(get_session)):
+async def list_datasources(
+    _admin: User = Depends(admin_user),
+    session: AsyncSession = Depends(get_session),
+):
     return await DataSourceCatalog(session).list_sources()
 
 
 @router.post("", response_model=DataSourceOut)
 async def create_datasource(
-    payload: DataSourceCreate, session: AsyncSession = Depends(get_session)
+    payload: DataSourceCreate,
+    _admin: User = Depends(admin_user),
+    session: AsyncSession = Depends(get_session),
 ):
     try:
         return await DataSourceCatalog(session).create_source(payload)
@@ -53,6 +60,7 @@ async def create_datasource(
 async def upload_datasource(
     file: UploadFile = File(...),
     name: str | None = Form(default=None),
+    _admin: User = Depends(admin_user),
     session: AsyncSession = Depends(get_session),
 ):
     original_name = file.filename or "uploaded-data"
@@ -104,13 +112,18 @@ async def upload_datasource(
 
 
 @router.delete("/{source_id}", status_code=204)
-async def delete_datasource(source_id: str, session: AsyncSession = Depends(get_session)):
+async def delete_datasource(
+    source_id: str,
+    _admin: User = Depends(admin_user),
+    session: AsyncSession = Depends(get_session),
+):
     await DataSourceCatalog(session).delete_source(source_id)
 
 
 @router.post("/rescan", response_model=list[DataSourceOut])
 async def rescan_datasources(
     payload: RescanRequest | None = None,
+    _admin: User = Depends(admin_user),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -126,6 +139,7 @@ async def preview_datasource_table(
     table: str | None = None,
     page: int = 1,
     page_size: int = 50,
+    _user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ):
     try:

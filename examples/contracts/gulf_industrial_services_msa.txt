@@ -1,0 +1,28 @@
+Master Services Agreement: Gulf Industrial Services
+Contract ID: CT-1001
+
+Scope:
+Gulf Industrial Services provides maintenance, turnaround planning, emergency
+repair crews, and rotating equipment inspection services for manufacturing sites.
+
+Commercial terms:
+Annual contract value is USD 1,850,000. Emergency call-out rates are included
+for the first 120 hours each contract year. Additional emergency hours are billed
+at USD 240 per hour.
+
+Renewal and termination:
+The agreement auto-renews for one additional 12-month term unless SABIC gives
+written notice at least 120 days before the end date. Termination for convenience
+requires 90 days notice. Termination for uncured safety breach requires 15 days
+notice after written warning.
+
+Risk clauses:
+Supplier must maintain USD 10,000,000 liability insurance and name SABIC as an
+additional insured party. Supplier must provide an annual site safety audit and
+submit remediation actions within 30 days. Repeated failure to meet safety KPIs
+is a material breach.
+
+Data and confidentiality:
+Supplier may receive operational schedules and site access rosters. The supplier
+must keep all SABIC operational information confidential for five years after
+contract termination.

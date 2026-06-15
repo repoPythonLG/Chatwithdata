@@ -6,9 +6,9 @@ import { Badge, Card } from "./ui";
 
 export function SystemStatusPanel() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const datasources = useQuery({ queryKey: ["datasources"], queryFn: api.datasources });
-  const active = datasources.data?.filter((source) => source.status === "active").length ?? 0;
+  const workspace = useQuery({ queryKey: ["contracts"], queryFn: api.contractWorkspace });
+  const database = workspace.data?.database;
+  const documents = workspace.data?.documents.length ?? 0;
 
   return (
     <Card className="space-y-4 p-4">
@@ -26,7 +26,13 @@ export function SystemStatusPanel() {
       <div className="grid gap-3 text-sm">
         <div className="flex items-center gap-3">
           <DatabaseZap className="h-4 w-4 text-harbor-500" />
-          <span>{active} active data source{active === 1 ? "" : "s"}</span>
+          <span>
+            {database?.status === "active" ? "Contract DB ready" : "No contract DB"}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <DatabaseZap className="h-4 w-4 text-harbor-500" />
+          <span>{documents} uploaded contract document{documents === 1 ? "" : "s"}</span>
         </div>
       </div>
     </Card>

@@ -2,17 +2,17 @@ import { FormEvent, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client";
-import { DataSourceManager } from "../components/DataSourceManager";
-import { SchemaBrowser } from "../components/SchemaBrowser";
+import { ContractWorkspaceManager } from "../components/ContractWorkspaceManager";
 import { SystemStatusPanel } from "../components/SystemStatusPanel";
+import { UserManagement } from "../components/UserManagement";
 import { Button, Card, Input } from "../components/ui";
 import { useAppStore } from "../store/appStore";
+import type { AuthUser } from "../types/api";
 
-export function SettingsPage() {
+export function SettingsPage({ currentUser }: { currentUser: AuthUser }) {
   const queryClient = useQueryClient();
   const responseMode = useAppStore((state) => state.responseMode);
   const setResponseMode = useAppStore((state) => state.setResponseMode);
-  const analysisEngine = useAppStore((state) => state.analysisEngine);
   const setAnalysisEngine = useAppStore((state) => state.setAnalysisEngine);
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const [llmBaseUrl, setLlmBaseUrl] = useState("");
@@ -28,6 +28,7 @@ export function SettingsPage() {
   const [qwenUseSandbox, setQwenUseSandbox] = useState(true);
 
   useEffect(() => {
+    setAnalysisEngine("qwen_cli");
     if (!settings.data) return;
     setLlmBaseUrl(settings.data.llm_base_url);
     setModelName(settings.data.model_name);
@@ -39,7 +40,7 @@ export function SettingsPage() {
     setQwenAuthType(settings.data.qwen_auth_type || "openai");
     setQwenApprovalMode(settings.data.qwen_approval_mode || "yolo");
     setQwenUseSandbox(settings.data.qwen_use_sandbox);
-  }, [settings.data]);
+  }, [settings.data, setAnalysisEngine]);
 
   const update = useMutation({
     mutationFn: api.updateSettings,
@@ -80,7 +81,7 @@ export function SettingsPage() {
             </p>
             <h1 className="font-display text-3xl font-bold">LLM endpoint</h1>
             <p className="mt-2 text-sm text-ink-500 dark:text-ink-100">
-              Configure the OpenAI-compatible endpoint and model used by the analysis agent.
+              Configure the OpenAI-compatible endpoint used by the contract intelligence engine.
             </p>
           </div>
           <form className="grid gap-3" onSubmit={submit}>
@@ -133,57 +134,21 @@ export function SettingsPage() {
             </p>
             <h2 className="font-display text-2xl font-bold">Intelligence Engine</h2>
             <p className="mt-2 text-sm text-ink-500 dark:text-ink-100">
-              Choose whether chat requests use the managed SQL/LangGraph agent or an
-              autonomous file-workspace engine against copied data files.
+              Chat with Contracts uses the autonomous engine against the generated
+              contract database and any uploaded contract documents.
             </p>
           </div>
-          <div className="mb-5 grid gap-3 md:grid-cols-2">
-            <button
-              className={`rounded-3xl border p-4 text-left transition ${
-                analysisEngine === "standard"
-                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
-                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-              }`}
-              onClick={() => setAnalysisEngine("standard")}
-              type="button"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-semibold">Standard</span>
-                {analysisEngine === "standard" ? (
-                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
-                    Active
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
-                Uses the governed SQL-first LangGraph workflow with validation and bounded retries.
-              </p>
-            </button>
-            <button
-              className={`rounded-3xl border p-4 text-left transition ${
-                analysisEngine === "qwen_cli"
-                  ? "border-harbor-500 bg-harbor-50 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15"
-                  : "border-ink-100 bg-white/60 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
-              }`}
-              onClick={() => {
-                setAnalysisEngine("qwen_cli");
-                setResponseMode("advanced");
-              }}
-              type="button"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-semibold">Advanced</span>
-                {analysisEngine === "qwen_cli" ? (
-                  <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
-                    Active
-                  </span>
-                ) : null}
-              </div>
-              <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
-                Runs an autonomous analysis engine inside a copied, data-only workspace
-                and shows raw engine output in Advanced response mode.
-              </p>
-            </button>
+          <div className="mb-5 rounded-3xl border border-harbor-500 bg-harbor-50 p-4 shadow-soft dark:border-harbor-400 dark:bg-harbor-500/15">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold">Contract intelligence mode</span>
+              <span className="rounded-full bg-harbor-500 px-2.5 py-1 text-xs font-semibold text-white">
+                Active
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-ink-500 dark:text-ink-100">
+              Every chat runs through the contract-only workspace with the SQLite
+              contract database and uploaded documents.
+            </p>
           </div>
           <div className="mb-3">
             <Input
@@ -289,8 +254,8 @@ export function SettingsPage() {
           </div>
         </Card>
 
-        <DataSourceManager />
-        <SchemaBrowser />
+        <ContractWorkspaceManager />
+        <UserManagement currentUser={currentUser} />
       </main>
     </div>
   );

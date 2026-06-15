@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
-from app.api.routes import chat, datasources, health, schema, settings
+from app.api.routes import auth, chat, contracts, datasources, health, schema, settings
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
@@ -44,7 +44,10 @@ def create_app() -> FastAPI:
         return ORJSONResponse(status_code=400, content={"detail": str(exc)})
 
     app.include_router(health.router)
+    app.include_router(auth.auth_router)
+    app.include_router(auth.users_router)
     app.include_router(settings.router)
+    app.include_router(contracts.router)
     app.include_router(datasources.router)
     app.include_router(schema.router)
     app.include_router(chat.router)

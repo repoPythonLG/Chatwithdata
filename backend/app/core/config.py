@@ -22,7 +22,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    app_name: str = "Corporate Data Chat"
+    app_name: str = "Chat with Contracts"
     environment: str = "local"
     log_level: str = "INFO"
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     app_data_dir: Path = Field(default=Path(".data"))
     metadata_db_path: Path = Field(default=Path(".data/app_metadata.db"))
     python_work_dir: Path = Field(default=Path(".data/python-work"))
+    contracts_work_dir: Path = Field(default=Path(".data/contracts"))
+    offline_assets_dir: Path = Field(default=Path(".data/offline-assets"))
+    docling_artifacts_path: Path | None = None
+    easyocr_model_dir: Path | None = None
+    easyocr_languages: list[str] = Field(default_factory=lambda: ["en"])
 
     allowed_data_roots: list[Path] = Field(default_factory=list)
 
@@ -62,6 +67,11 @@ class Settings(BaseSettings):
     metadata_profile_value_limit: int = Field(default=20, ge=1, le=100)
     metadata_cache_seconds: int = Field(default=120, ge=0)
 
+    initial_admin_username: str = Field(default="admin")
+    initial_admin_password: str = Field(default="admin123!")
+    auth_session_hours: int = Field(default=12, ge=1, le=168)
+    auth_cookie_secure: bool = Field(default=False)
+
     @field_validator("allowed_data_roots", mode="before")
     @classmethod
     def parse_roots(cls, value: Any) -> list[Path]:
@@ -78,6 +88,15 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("easyocr_languages", mode="before")
+    @classmethod
+    def parse_easyocr_languages(cls, value: Any) -> list[str]:
+        if value in (None, "", []):
+            return ["en"]
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
     @property
     def llm_base_url(self) -> str:
         return self.openai_api_base or self.vllm_base_url
@@ -86,7 +105,13 @@ class Settings(BaseSettings):
         self.app_data_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_db_path.parent.mkdir(parents=True, exist_ok=True)
         self.python_work_dir.mkdir(parents=True, exist_ok=True)
+        self.contracts_work_dir.mkdir(parents=True, exist_ok=True)
         self.qwen_work_dir.mkdir(parents=True, exist_ok=True)
+        self.offline_assets_dir.mkdir(parents=True, exist_ok=True)
+        if self.docling_artifacts_path:
+            self.docling_artifacts_path.mkdir(parents=True, exist_ok=True)
+        if self.easyocr_model_dir:
+            self.easyocr_model_dir.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

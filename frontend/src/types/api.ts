@@ -1,4 +1,30 @@
 export type DataSourceType = "sqlite" | "excel" | "csv";
+export type UserRole = "admin" | "standard";
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  last_login_at?: string | null;
+}
+
+export interface UserCreatePayload {
+  username: string;
+  display_name?: string | null;
+  password: string;
+  role: UserRole;
+  is_active: boolean;
+}
+
+export interface UserUpdatePayload {
+  display_name?: string | null;
+  role?: UserRole;
+  is_active?: boolean;
+}
 
 export interface StatusEvent {
   step: string;
@@ -37,6 +63,22 @@ export interface DataSource {
   last_scanned_at: string | null;
   error: string | null;
   profile: Record<string, unknown>;
+}
+
+export interface ContractDocument {
+  id: string;
+  name: string;
+  filename: string;
+  path: string;
+  extracted_text_path?: string | null;
+  content_type?: string | null;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface ContractWorkspace {
+  database?: DataSource | null;
+  documents: ContractDocument[];
 }
 
 export interface ColumnMetadata {

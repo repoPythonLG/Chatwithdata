@@ -20,7 +20,7 @@ from app.agent.text_sanitizer import (
 )
 from app.core.llm import LLMClient
 from app.core.runtime_settings import RuntimeSettingsService, settings_from_effective
-from app.db.models import ChatMessage, Conversation
+from app.db.models import ChatMessage, Conversation, User
 from app.schemas.chat import ChatRequest, ChatResponse, ConversationOut
 
 
@@ -29,17 +29,27 @@ def sse_event(event: str, data: dict[str, Any]) -> str:
 
 
 class ChatService:
-    def __init__(self, session: AsyncSession, llm: LLMClient | None = None):
+    def __init__(
+        self,
+        session: AsyncSession,
+        llm: LLMClient | None = None,
+        user: User | None = None,
+    ):
         self.session = session
         self.llm = llm
+        self.user = user
+        self.user_id = user.id if user else None
 
     async def list_conversations(self) -> list[ConversationOut]:
-        result = await self.session.execute(
+        statement = (
             select(Conversation)
             .options(selectinload(Conversation.messages))
             .order_by(Conversation.updated_at.desc())
             .limit(50)
         )
+        if self.user_id:
+            statement = statement.where(Conversation.user_id == self.user_id)
+        result = await self.session.execute(statement)
         conversations = list(result.scalars().unique().all())
         return [ConversationOut.model_validate(item) for item in conversations]
 
@@ -51,15 +61,29 @@ class ChatService:
         conversation = await self.session.get(Conversation, conversation_id)
         if conversation is None:
             return
+        if self.user_id and conversation.user_id != self.user_id:
+            return
         await self.session.delete(conversation)
         await self.session.commit()
 
     async def clear_conversations(self) -> None:
-        await self.session.execute(delete(ChatMessage))
-        await self.session.execute(delete(Conversation))
+        if self.user_id:
+            owned_conversations = select(Conversation.id).where(
+                Conversation.user_id == self.user_id
+            )
+            await self.session.execute(
+                delete(ChatMessage).where(ChatMessage.conversation_id.in_(owned_conversations))
+            )
+            await self.session.execute(
+                delete(Conversation).where(Conversation.user_id == self.user_id)
+            )
+        else:
+            await self.session.execute(delete(ChatMessage))
+            await self.session.execute(delete(Conversation))
         await self.session.commit()
 
     async def run_chat(self, payload: ChatRequest) -> ChatResponse:
+        payload.engine = "qwen_cli"
         conversation = await self._ensure_conversation(payload)
         user_message = ChatMessage(
             conversation_id=conversation.id,
@@ -77,7 +101,9 @@ class ChatService:
         if payload.engine == "qwen_cli":
             effective_settings = await RuntimeSettingsService(self.session).get_effective()
             result = await QwenCliEngine(
-                self.session, settings_from_effective(effective_settings)
+                self.session,
+                settings_from_effective(effective_settings),
+                user_id=self.user_id,
             ).run(
                 question=payload.message,
                 messages=context,
@@ -101,6 +127,7 @@ class ChatService:
         return response
 
     async def stream_chat(self, payload: ChatRequest) -> AsyncIterator[str]:
+        payload.engine = "qwen_cli"
         conversation = await self._ensure_conversation(payload)
         user_message = ChatMessage(
             conversation_id=conversation.id,
@@ -133,7 +160,9 @@ class ChatService:
             final_result: QwenCliResult | None = None
             effective_settings = await RuntimeSettingsService(self.session).get_effective()
             engine = QwenCliEngine(
-                self.session, settings_from_effective(effective_settings)
+                self.session,
+                settings_from_effective(effective_settings),
+                user_id=self.user_id,
             )
             async for event in engine.stream(
                 question=payload.message,
@@ -215,21 +244,30 @@ class ChatService:
         if payload.conversation_id:
             existing = await self.session.get(Conversation, payload.conversation_id)
             if existing is not None:
+                if self.user_id and existing.user_id != self.user_id:
+                    raise ValueError("Conversation does not belong to the current user.")
                 return existing
 
         title = payload.message.strip().splitlines()[0][:80] or "New conversation"
-        conversation = Conversation(id=payload.conversation_id or str(uuid.uuid4()), title=title)
+        conversation = Conversation(
+            id=payload.conversation_id or str(uuid.uuid4()),
+            user_id=self.user_id,
+            title=title,
+        )
         self.session.add(conversation)
         await self.session.commit()
         await self.session.refresh(conversation)
         return conversation
 
     async def _get_conversation(self, conversation_id: str) -> Conversation:
-        result = await self.session.execute(
+        statement = (
             select(Conversation)
             .options(selectinload(Conversation.messages))
             .where(Conversation.id == conversation_id)
         )
+        if self.user_id:
+            statement = statement.where(Conversation.user_id == self.user_id)
+        result = await self.session.execute(statement)
         conversation = result.scalars().unique().one_or_none()
         if conversation is None:
             raise ValueError(f"Unknown conversation: {conversation_id}")

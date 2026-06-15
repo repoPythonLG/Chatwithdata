@@ -1,0 +1,28 @@
+Data Processing Addendum: Nexa Cloud Analytics
+Contract ID: CT-1003
+
+Scope:
+Nexa Cloud Analytics provides a hosted analytics platform, dashboards, and
+support for contract performance and procurement data. The service processes
+business contact details, usage logs, support tickets, and limited procurement
+metadata.
+
+Data residency and transfer:
+All EU personal data and EU procurement metadata must be stored and processed in
+EU-hosted environments. Cross-border transfer outside the EU requires prior
+written approval from SABIC Legal and a documented transfer impact assessment.
+
+Security controls:
+Nexa must complete quarterly penetration testing and provide a summary report to
+SABIC within 10 business days of completion. Critical vulnerabilities must be
+remediated within 15 calendar days. High vulnerabilities must be remediated
+within 30 calendar days.
+
+Renewal and exit:
+The agreement auto-renews unless SABIC gives written notice at least 180 days
+before the end date. On exit, Nexa must provide a complete data export within 20
+business days and certify deletion of residual data within 45 calendar days.
+
+Commercial note:
+The annual subscription is USD 620,000. Service credits apply if monthly uptime
+falls below 99.5 percent.

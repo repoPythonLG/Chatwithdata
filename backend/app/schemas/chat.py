@@ -12,7 +12,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     conversation_id: str | None = None
     selected_data_sources: list[str] | None = None
-    engine: Literal["standard", "qwen_cli"] = "standard"
+    engine: Literal["standard", "qwen_cli"] = "qwen_cli"
     stream: bool = False
 
 

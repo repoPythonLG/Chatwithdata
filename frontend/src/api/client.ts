@@ -1,18 +1,24 @@
 import type {
+  AuthUser,
   ChatResponse,
+  ContractDocument,
+  ContractWorkspace,
   Conversation,
   DataSource,
   DataSourceType,
   SchemaOut,
   SettingsOut,
   StatusEvent,
-  TablePreview
+  TablePreview,
+  UserCreatePayload,
+  UserUpdatePayload
 } from "../types/api";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {})
@@ -27,6 +33,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  currentUser: () => request<AuthUser>("/auth/me"),
+  login: (payload: { username: string; password: string }) =>
+    request<AuthUser>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
+  logout: async () => {
+    const response = await fetch(`${API_BASE}/auth/logout`, {
+      method: "POST",
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(response.statusText);
+  },
+  users: () => request<AuthUser[]>("/users"),
+  createUser: (payload: UserCreatePayload) =>
+    request<AuthUser>("/users", { method: "POST", body: JSON.stringify(payload) }),
+  updateUser: (id: string, payload: UserUpdatePayload) =>
+    request<AuthUser>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  updateUserPassword: (id: string, password: string) =>
+    request<AuthUser>(`/users/${id}/password`, {
+      method: "POST",
+      body: JSON.stringify({ password })
+    }),
+  deactivateUser: async (id: string) => {
+    const response = await fetch(`${API_BASE}/users/${id}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(response.statusText);
+  },
   health: () => request<Record<string, unknown>>("/health"),
   settings: () => request<SettingsOut>("/settings"),
   updateSettings: (payload: Partial<SettingsOut>) =>
@@ -40,6 +73,7 @@ export const api = {
     if (payload.name) form.append("name", payload.name);
     const response = await fetch(`${API_BASE}/datasources/upload`, {
       method: "POST",
+      credentials: "include",
       body: form
     });
     if (!response.ok) {
@@ -49,7 +83,10 @@ export const api = {
     return response.json() as Promise<DataSource>;
   },
   deleteDatasource: async (id: string) => {
-    const response = await fetch(`${API_BASE}/datasources/${id}`, { method: "DELETE" });
+    const response = await fetch(`${API_BASE}/datasources/${id}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
     if (!response.ok) throw new Error(response.statusText);
   },
   datasourcePreview: (payload: {
@@ -67,15 +104,61 @@ export const api = {
   },
   rescanDatasources: () =>
     request<DataSource[]>("/datasources/rescan", { method: "POST", body: JSON.stringify({}) }),
+  contractWorkspace: () => request<ContractWorkspace>("/contracts"),
+  uploadContractDatabase: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`${API_BASE}/contracts/database/upload`, {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail ?? "Contract database upload failed");
+    }
+    return response.json() as Promise<ContractWorkspace>;
+  },
+  uploadContractDocuments: async (files: File[]) => {
+    const form = new FormData();
+    files.forEach((file) => form.append("files", file));
+    const response = await fetch(`${API_BASE}/contracts/documents/upload`, {
+      method: "POST",
+      credentials: "include",
+      body: form
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail ?? "Contract document upload failed");
+    }
+    return response.json() as Promise<ContractDocument[]>;
+  },
+  deleteContractDocument: async (id: string) => {
+    const response = await fetch(`${API_BASE}/contracts/documents/${id}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(response.statusText);
+  },
+  clearContractDocuments: async () => {
+    const response = await fetch(`${API_BASE}/contracts/documents`, {
+      method: "DELETE",
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(response.statusText);
+  },
   schema: () => request<SchemaOut>("/schema"),
   conversations: () => request<Conversation[]>("/chat"),
   conversation: (id: string) => request<Conversation>(`/chat/${id}`),
   deleteConversation: async (id: string) => {
-    const response = await fetch(`${API_BASE}/chat/${id}`, { method: "DELETE" });
+    const response = await fetch(`${API_BASE}/chat/${id}`, {
+      method: "DELETE",
+      credentials: "include"
+    });
     if (!response.ok) throw new Error(response.statusText);
   },
   clearConversations: async () => {
-    const response = await fetch(`${API_BASE}/chat`, { method: "DELETE" });
+    const response = await fetch(`${API_BASE}/chat`, { method: "DELETE", credentials: "include" });
     if (!response.ok) throw new Error(response.statusText);
   },
   chat: (payload: {
@@ -107,6 +190,7 @@ export async function streamChat(
 ) {
   const response = await fetch(`${API_BASE}/chat/stream`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...payload, stream: true })
   });

@@ -12,3 +12,7 @@ __pycache__/
 *.egg-info/
 .data/
 backend/.data/
+offline/bundle/payload/
+offline/bundle/.build/
+offline/bundle/*.tar
+offline/bundle/*.tar.gz
