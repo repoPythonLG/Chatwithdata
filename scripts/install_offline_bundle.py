@@ -26,6 +26,12 @@ def main() -> int:
     parser.add_argument("--bundle-dir", type=Path, default=DEFAULT_BUNDLE_DIR)
     parser.add_argument("--target-root", type=Path, default=ROOT)
     parser.add_argument("--skip-python-install", action="store_true")
+    parser.add_argument(
+        "--python-install-source",
+        choices=("pypi", "wheelhouse"),
+        default="pypi",
+        help="Install Python dependencies from PyPI or from a bundled wheelhouse.",
+    )
     parser.add_argument("--keep-archive", action="store_true")
     args = parser.parse_args()
 
@@ -48,9 +54,10 @@ def main() -> int:
             raise RuntimeError("Offline archive did not contain a payload directory.")
 
         _copy_model_assets(payload_dir, target_root)
+        _copy_frontend_dist(payload_dir, target_root)
         _write_env_settings(target_root, manifest.get("easyocr_languages") or "en")
         if not args.skip_python_install:
-            _install_backend_python(payload_dir, target_root)
+            _install_backend_python(payload_dir, target_root, args.python_install_source)
 
         if args.keep_archive:
             destination = bundle_dir / manifest["archive_name"]
@@ -79,6 +86,16 @@ def _copy_model_assets(payload_dir: Path, target_root: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)
         if source.exists():
             shutil.copytree(source, destination, dirs_exist_ok=True)
+
+
+def _copy_frontend_dist(payload_dir: Path, target_root: Path) -> None:
+    source = payload_dir / "frontend" / "dist"
+    if not source.exists():
+        return
+    destination = target_root / "frontend" / "dist"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(source, destination)
 
 
 def _write_env_settings(target_root: Path, easyocr_languages: str) -> None:
@@ -110,7 +127,7 @@ def _write_env_settings(target_root: Path, easyocr_languages: str) -> None:
     env_path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _install_backend_python(payload_dir: Path, target_root: Path) -> None:
+def _install_backend_python(payload_dir: Path, target_root: Path, source: str) -> None:
     backend_dir = target_root / "backend"
     venv_dir = backend_dir / ".venv"
     if not _venv_python(venv_dir).exists():
@@ -118,21 +135,43 @@ def _install_backend_python(payload_dir: Path, target_root: Path) -> None:
     python = _venv_python(venv_dir)
     wheelhouse = payload_dir / "wheelhouse"
     requirements = payload_dir / "requirements-offline.txt"
-    _run([str(python), "-m", "pip", "install", "--upgrade", "pip"])
-    _run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--find-links",
-            str(wheelhouse),
-            "-r",
-            str(requirements),
-        ],
-        cwd=backend_dir,
-    )
+    if source == "wheelhouse":
+        if not any(wheelhouse.glob("*")):
+            raise RuntimeError("Bundled wheelhouse is empty. Use --python-install-source pypi.")
+        _run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(wheelhouse),
+                "--upgrade",
+                "pip",
+                "setuptools",
+                "wheel",
+            ],
+            cwd=backend_dir,
+        )
+        _run(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--find-links",
+                str(wheelhouse),
+                "-r",
+                str(requirements),
+            ],
+            cwd=backend_dir,
+        )
+        return
+
+    _run([str(python), "-m", "pip", "install", "--upgrade", "pip"], cwd=backend_dir)
+    _run([str(python), "-m", "pip", "install", "-r", str(requirements)], cwd=backend_dir)
 
 
 def _safe_extract(archive: tarfile.TarFile, target_dir: Path) -> None:

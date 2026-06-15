@@ -4,12 +4,16 @@ Build the offline bundle on an internet-connected machine that matches the targe
 deployment platform as closely as possible.
 
 ```bash
-python scripts/build_offline_bundle.py --chunk-mb 95 --easyocr-languages en
+python scripts/build_offline_bundle.py \
+  --python backend/.venv/bin/python \
+  --chunk-mb 95 \
+  --easyocr-languages en
 ```
 
 The builder creates:
 
-- `offline/bundle/payload/` with wheels and local Docling/EasyOCR model assets.
+- `offline/bundle/payload/` with local Docling/EasyOCR model assets and the
+  prebuilt React frontend.
 - `offline/bundle/chat-with-contracts-offline.tar` as the full archive.
 - `offline/bundle/chunks/*.part*`, each smaller than the configured chunk size.
 - `offline/bundle/manifest.json` with SHA256 checksums.
@@ -24,9 +28,9 @@ python scripts/install_offline_bundle.py
 ```
 
 The installer reassembles and verifies the chunks, installs backend Python
-packages from the local wheelhouse, copies Docling/EasyOCR model assets into
-`backend/.data/offline-assets/`, and writes the local model paths into
-`backend/.env`.
+packages from PyPI by default, copies Docling/EasyOCR model assets into
+`backend/.data/offline-assets/`, restores `frontend/dist`, and writes the local
+model paths into `backend/.env`.
 
 Runtime document extraction is intentionally offline-only:
 

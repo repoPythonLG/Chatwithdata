@@ -1,0 +1,92 @@
+{
+  "name": "chat-with-contracts-offline",
+  "created_by": "scripts/build_offline_bundle.py",
+  "format_version": 1,
+  "archive_name": "chat-with-contracts-offline.tar",
+  "archive_size": 1405450240,
+  "archive_sha256": "4f76f24e9140ab98f0837402293c3744ba17c20c58b7fa26fba226dddbdf5b83",
+  "chunk_size_mb": 95,
+  "requirements_file": "offline/requirements-offline.txt",
+  "easyocr_languages": "en",
+  "target_platform": "manylinux2014_x86_64",
+  "target_python_version": "310",
+  "target_implementation": "cp",
+  "target_abi": "cp310",
+  "chunks": [
+    {
+      "name": "chat-with-contracts-offline.tar.part0001",
+      "size": 99614720,
+      "sha256": "e45d2eb8bb37be27af6bb40f8ecf5b6e1ad7186214f989676bb6d12fb9f7d90b"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0002",
+      "size": 99614720,
+      "sha256": "5cd8c70b696f8ca979f4db6ef2ae4e3cfcbfae8da308d7c753e0efcc93c331dd"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0003",
+      "size": 99614720,
+      "sha256": "130482d8a82599b032617e0abed36f11c47587544eb16091cc2d57a8cb8d7e79"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0004",
+      "size": 99614720,
+      "sha256": "4d75892d0f7d4a1914b8ac53e56ff8f95000f511cbd05c8493c03e360fdc493c"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0005",
+      "size": 99614720,
+      "sha256": "c0b2152f328cf40acd142404c0f850274e4cd55908e39aa735ddf3cc16cbda72"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0006",
+      "size": 99614720,
+      "sha256": "f75b6e2b3a161745ceebef3b6a1f17f4e88e501fb9fbec3479921e9b55d38200"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0007",
+      "size": 99614720,
+      "sha256": "54df965fdb12f8a16fd68894441a53e4d9fc6f80fca7143ed382630018d2163a"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0008",
+      "size": 99614720,
+      "sha256": "eeb30bc6ab524242315dcbfdc9f485153be308e8d4e0d322848f8fb9609dbdc9"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0009",
+      "size": 99614720,
+      "sha256": "03b7b103725dd1a1af6effbc063a25146e1c6b584437cb8cfbbc4ad2c41448c0"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0010",
+      "size": 99614720,
+      "sha256": "f15ef2b71ecb06a87346d94c99e87f63b2774eb32f785db61464bbe7c204792f"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0011",
+      "size": 99614720,
+      "sha256": "88e1652d58fc385e193536ddaae96665421100cd6984b92d08b71c2b3f054f3f"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0012",
+      "size": 99614720,
+      "sha256": "2021375e9b06c24cc6e3906a39a538041d4f3b9964b8829af4f1fdd8cb11dab8"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0013",
+      "size": 99614720,
+      "sha256": "2a790bc7724a1ce5fba20357d04ac06a62c2762afee2a321a1c3b77feac9115e"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0014",
+      "size": 99614720,
+      "sha256": "b36095f127021f745ac454ac987d069d734eb646591db8ecd3681034c7008991"
+    },
+    {
+      "name": "chat-with-contracts-offline.tar.part0015",
+      "size": 10844160,
+      "sha256": "a5429f0045800ace536e891ac5615a3ba8331a1ddfd4f1165564048504e7edb1"
+    }
+  ]
+}

@@ -29,6 +29,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "frontend_port": 8090,
         "backend_host": "127.0.0.1",
         "backend_port": 8001,
+        "frontend_mode": "static",
         "node_bin": "",
         "npm_bin": "",
         "vite_hmr": False,
@@ -346,6 +347,13 @@ def main() -> int:
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     ensure_not_running(pid_file)
 
+    frontend_mode = str(config.get("frontend_mode") or "static").strip().lower()
+    if frontend_mode not in {"static", "vite"}:
+        raise ValueError("frontend_mode must be either 'static' or 'vite'.")
+    if frontend_mode == "static":
+        backend_host = frontend_host
+        backend_port = frontend_port
+
     backend_url = f"http://{backend_host}:{backend_port}"
     frontend_url = f"http://{frontend_host}:{frontend_port}"
     allowed_hosts = cloudera_allowed_hosts(public_host)
@@ -356,12 +364,7 @@ def main() -> int:
     )
     backend_env.setdefault("ENVIRONMENT", "local")
 
-    node_bin = select_node_bin(config)
-    npm_bin = select_npm_bin(config, node_bin)
-    node_path_prefix = str(node_bin.parent)
-
     frontend_env = os.environ.copy()
-    frontend_env["PATH"] = f"{node_path_prefix}{os.pathsep}{frontend_env.get('PATH', '')}"
     frontend_env.update(
         {
             "CDSW_APP_POLLING_ENDPOINT": os.getenv("CDSW_APP_POLLING_ENDPOINT", "/healthz"),
@@ -373,6 +376,13 @@ def main() -> int:
             "VITE_HMR": "true" if bool(config.get("vite_hmr")) else "false",
         }
     )
+    node_bin: Path | None = None
+    npm_bin: Path | None = None
+    if frontend_mode == "vite":
+        node_bin = select_node_bin(config)
+        npm_bin = select_npm_bin(config, node_bin)
+        node_path_prefix = str(node_bin.parent)
+        frontend_env["PATH"] = f"{node_path_prefix}{os.pathsep}{frontend_env.get('PATH', '')}"
     if normalized_public_host:
         frontend_env["CLOUDERA_PUBLIC_HOST"] = normalized_public_host
 
@@ -413,23 +423,16 @@ def main() -> int:
             "--port",
             str(backend_port),
         ]
-        frontend_cmd = [
-            str(npm_bin),
-            "run",
-            "dev",
-            "--",
-            "--host",
-            frontend_host,
-            "--port",
-            str(frontend_port),
-            "--strictPort",
-        ]
+        frontend_cmd = []
 
         print(f"Starting FastAPI on {backend_url}", flush=True)
-        print(
-            f"Using Node {executable_version([str(node_bin), '-v'])} at {node_bin}",
-            flush=True,
-        )
+        if frontend_mode == "vite" and node_bin is not None:
+            print(
+                f"Using Node {executable_version([str(node_bin), '-v'])} at {node_bin}",
+                flush=True,
+            )
+        else:
+            print("Using static frontend served by FastAPI.", flush=True)
         processes["backend"] = subprocess.Popen(
             backend_cmd,
             cwd=ROOT / "backend",
@@ -439,20 +442,33 @@ def main() -> int:
             start_new_session=True,
         )
 
-        print(f"Starting Vite on {frontend_url}", flush=True)
-        processes["frontend"] = subprocess.Popen(
-            frontend_cmd,
-            cwd=ROOT / "frontend",
-            env=frontend_env,
-            stdout=frontend_log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        if frontend_mode == "vite":
+            assert npm_bin is not None
+            frontend_cmd = [
+                str(npm_bin),
+                "run",
+                "dev",
+                "--",
+                "--host",
+                frontend_host,
+                "--port",
+                str(frontend_port),
+                "--strictPort",
+            ]
+            print(f"Starting Vite on {frontend_url}", flush=True)
+            processes["frontend"] = subprocess.Popen(
+                frontend_cmd,
+                cwd=ROOT / "frontend",
+                env=frontend_env,
+                stdout=frontend_log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
 
         pid_payload = {
             "supervisor_pid": os.getpid(),
             "backend_pid": processes["backend"].pid,
-            "frontend_pid": processes["frontend"].pid,
+            "frontend_pid": processes["frontend"].pid if "frontend" in processes else None,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "frontend_url": frontend_url,
             "backend_url": backend_url,
@@ -469,7 +485,7 @@ def main() -> int:
         if not wait_for_tcp(backend_host, backend_port, 60):
             raise RuntimeError(f"FastAPI did not become available. Check {backend_log_path}.")
         if not wait_for_url(frontend_url, 60):
-            raise RuntimeError(f"Vite did not become available. Check {frontend_log_path}.")
+            raise RuntimeError(f"Frontend did not become available. Check {frontend_log_path}.")
 
         print("Chat with Data is running.", flush=True)
         print(f"Frontend: {frontend_url}", flush=True)

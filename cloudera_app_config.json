@@ -5,6 +5,7 @@
   "frontend_port": 8090,
   "backend_host": "127.0.0.1",
   "backend_port": 8001,
+  "frontend_mode": "static",
   "node_bin": "",
   "npm_bin": "",
   "vite_hmr": false,

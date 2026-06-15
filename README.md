@@ -57,12 +57,17 @@ Build the offline bundle on an internet-connected Python 3.10 machine that match
 the target OS/CPU architecture:
 
 ```bash
-python scripts/build_offline_bundle.py --chunk-mb 95 --easyocr-languages en
+python scripts/build_offline_bundle.py \
+  --python backend/.venv/bin/python \
+  --chunk-mb 95 \
+  --easyocr-languages en
 ```
 
-The builder downloads runtime Python wheels plus Docling and EasyOCR model assets,
-then creates GitHub-friendly chunks under `offline/bundle/chunks/`, each below the
-configured chunk size. Commit `offline/bundle/manifest.json` and
+The builder downloads Docling and EasyOCR model assets plus the prebuilt React
+frontend, then creates GitHub-friendly chunks under `offline/bundle/chunks/`,
+each below the configured chunk size. Python packages are installed from PyPI by
+the installer, unless you explicitly build with `--include-wheelhouse`. Commit
+`offline/bundle/manifest.json` and
 `offline/bundle/chunks/*.part*` if the offline bundle must live in GitHub.
 
 On the offline target:
@@ -71,11 +76,12 @@ On the offline target:
 python scripts/install_offline_bundle.py
 ```
 
-The installer verifies checksums, installs backend dependencies using only the
-local wheelhouse, copies Docling/EasyOCR model assets into
-`backend/.data/offline-assets/`, and writes the local model paths into
-`backend/.env`. Runtime extraction is offline-only: EasyOCR is called with
-`download_enabled=False`, and Docling uses the configured local artifact path.
+The installer verifies checksums, installs backend dependencies from PyPI, copies
+Docling/EasyOCR model assets into
+`backend/.data/offline-assets/`, restores `frontend/dist`, and writes the local
+model paths into `backend/.env`. Runtime extraction is offline-only: EasyOCR is
+called with `download_enabled=False`, and Docling uses the configured local
+artifact path.
 
 ## Cloudera Application Startup
 

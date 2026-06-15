@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     python_work_dir: Path = Field(default=Path(".data/python-work"))
     contracts_work_dir: Path = Field(default=Path(".data/contracts"))
     offline_assets_dir: Path = Field(default=Path(".data/offline-assets"))
+    frontend_dist_dir: Path = Field(default=Path("../frontend/dist"))
     docling_artifacts_path: Path | None = None
     easyocr_model_dir: Path | None = None
     easyocr_languages: list[str] = Field(default_factory=lambda: ["en"])
